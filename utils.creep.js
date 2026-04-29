@@ -820,20 +820,36 @@ function getQueuedSourceDestination(creep, source, queue) {
     return destination;
 }
 
+function getProjectedSourceQueueLoad(creep, source) {
+    var queue = pruneSourceQueue(creep.room, source);
+    var load = 1;
+
+    for(var i = 0; i < queue.creeps.length; i++) {
+        if(queue.creeps[i] != creep.name) {
+            load++;
+        }
+    }
+
+    return load;
+}
+
+function getSourceHarvestCapacity(creep, source) {
+    return Math.max(getQueueHarvestPositions(creep, source).length, 1);
+}
+
 function sourceQueueScore(creep, source) {
     if(!isSafeTarget(creep, source) ||
         !canReachBeforeDecay(creep, source, 1)) {
         return 9999 + creep.pos.getRangeTo(source);
     }
 
-    var queue = pruneSourceQueue(creep.room, source);
-    var harvestPositions = getAdjacentHarvestPositions(creep, source);
-    var waitingPositions = getWaitingPositions(creep, source);
-    var slots = Math.max(harvestPositions.length + waitingPositions.length, 1);
-    var queuePressure = queue.creeps.length / slots;
-    var energyBonus = source.energy > 0 ? -2 : 0;
+    var load = getProjectedSourceQueueLoad(creep, source);
+    var harvestCapacity = getSourceHarvestCapacity(creep, source);
+    var waitingPenalty = Math.max(load - harvestCapacity, 0) * 30;
+    var pressurePenalty = (load / harvestCapacity) * 8;
+    var energyBonus = source.energy > 0 ? -4 : 20;
 
-    return queuePressure * 20 + creep.pos.getRangeTo(source) + energyBonus;
+    return creep.pos.getRangeTo(source) + pressurePenalty + waitingPenalty + energyBonus;
 }
 
 function isAvoidingSource(creep, source) {
@@ -850,19 +866,6 @@ function avoidSourceTemporarily(creep, source) {
 }
 
 function findQueuedSource(creep) {
-    if(creep.memory.energySourceId) {
-        var existingSource = Game.getObjectById(creep.memory.energySourceId);
-        if(existingSource &&
-            existingSource.room.name == creep.room.name &&
-            isSafeTarget(creep, existingSource) &&
-            canReachBeforeDecay(creep, existingSource, 1) &&
-            !isAvoidingSource(creep, existingSource)) {
-            return existingSource;
-        }
-
-        releaseEnergyQueue(creep);
-    }
-
     var sources = creep.room.find(FIND_SOURCES, {
         filter: function(source) {
             return isSafeTarget(creep, source) &&
@@ -877,6 +880,40 @@ function findQueuedSource(creep) {
     sources.sort(function(a, b) {
         return sourceQueueScore(creep, a) - sourceQueueScore(creep, b);
     });
+
+    if(creep.memory.energySourceId) {
+        var existingSource = Game.getObjectById(creep.memory.energySourceId);
+        if(existingSource &&
+            existingSource.room.name == creep.room.name &&
+            isSafeTarget(creep, existingSource) &&
+            canReachBeforeDecay(creep, existingSource, 1) &&
+            !isAvoidingSource(creep, existingSource)) {
+            var bestSource = sources[0];
+            var existingQueue = pruneSourceQueue(creep.room, existingSource);
+            var existingIndex = getQueueIndex(existingQueue, creep.name);
+            var existingCapacity = getSourceHarvestCapacity(creep, existingSource);
+            var alreadyHarvesting = existingIndex >= 0 &&
+                existingIndex < existingCapacity &&
+                creep.pos.inRangeTo(existingSource, 1);
+            var existingScore = sourceQueueScore(creep, existingSource);
+            var bestScore = sourceQueueScore(creep, bestSource);
+
+            if(alreadyHarvesting || bestSource.id == existingSource.id || bestScore + 15 >= existingScore) {
+                return existingSource;
+            }
+
+            debug.log(
+                'debugRoles',
+                creep.name + ' switching energy source from ' + existingSource.id +
+                    ' to ' + bestSource.id +
+                    ' scores ' + Math.round(existingScore) + ' -> ' + Math.round(bestScore),
+                3
+            );
+            return bestSource;
+        }
+
+        releaseEnergyQueue(creep);
+    }
 
     return sources[0];
 }
