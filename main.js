@@ -28,6 +28,7 @@ var DEFAULT_ROOM_MEMORY = {
         autoRoads: true,
         autoRamparts: true,
         autoExitWalls: true,
+        autoWallTargetHits: true,
         maxTotalSites: 20,
         maxInfrastructureSites: 12,
         maxNewInfrastructureSitesPerTick: 4,

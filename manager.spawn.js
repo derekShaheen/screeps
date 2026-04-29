@@ -244,6 +244,19 @@ function hasStoredEnergy(room) {
     return stores.length > 0;
 }
 
+function countDefenseRepairTargets(room) {
+    var targetHits = room.memory.wallTargetHits || 1000;
+    var structures = room.find(FIND_STRUCTURES, {
+        filter: function(structure) {
+            return (structure.structureType == STRUCTURE_WALL ||
+                structure.structureType == STRUCTURE_RAMPART) &&
+                structure.hits < targetHits;
+        }
+    });
+
+    return structures.length;
+}
+
 function getHostileThreatCount(room) {
     var hostiles = room.find(FIND_HOSTILE_CREEPS, {
         filter: function(creep) {
@@ -302,7 +315,7 @@ function scaleTransporters(room, targets) {
         targets.transporter = Math.max(targets.transporter, 2);
     }
 
-    if(sourceContainers >= 2 && room.energyCapacityAvailable >= 800) {
+    if(hasStorage && room.energyCapacityAvailable >= 800) {
         targets.transporter = Math.max(targets.transporter, 3);
     }
 
@@ -319,6 +332,8 @@ function scaleTransporters(room, targets) {
 }
 
 function scaleBuilders(room, targets, constructionSites) {
+    var defenseRepairTargets = countDefenseRepairTargets(room);
+
     if(constructionSites >= 5) {
         targets.builder = Math.max(targets.builder, 2);
     }
@@ -334,13 +349,26 @@ function scaleBuilders(room, targets, constructionSites) {
     if(room.controller && room.controller.level >= 4 && constructionSites >= 10) {
         targets.builder = Math.max(targets.builder, 3);
     }
+
+    if(constructionSites === 0 && defenseRepairTargets > 0 && room.energyCapacityAvailable >= 550) {
+        targets.builder = Math.max(targets.builder, 2);
+    }
+
+    if(constructionSites === 0 &&
+        defenseRepairTargets >= 10 &&
+        hasStoredEnergy(room) &&
+        room.energyCapacityAvailable >= 800) {
+        targets.builder = Math.max(targets.builder, 3);
+    }
 }
 
 function scaleUpgraders(room, counts, targets, constructionSites) {
+    var defenseRepairBacklog = countDefenseRepairTargets(room) > 0;
     var energyStable = room.energyCapacityAvailable >= 550 &&
         room.energyAvailable == room.energyCapacityAvailable &&
         constructionSites < 5 &&
-        counts.harvester >= targets.harvester;
+        counts.harvester >= targets.harvester &&
+        !defenseRepairBacklog;
 
     if(energyStable) {
         targets.upgrader = Math.max(targets.upgrader, 2);

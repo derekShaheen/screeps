@@ -25,6 +25,10 @@ function isRoomEdge(pos) {
     return pos.x <= 0 || pos.x >= 49 || pos.y <= 0 || pos.y >= 49;
 }
 
+function isExitBuffer(pos) {
+    return pos.x <= 1 || pos.x >= 48 || pos.y <= 1 || pos.y >= 48;
+}
+
 function isCoreBuildTile(room, pos) {
     return !isRoomEdge(pos) && getTerrain(room, pos.x, pos.y) != TERRAIN_MASK_WALL;
 }
@@ -110,6 +114,46 @@ function needsMore(room, structureType) {
     return countStructuresAndSites(room, structureType) < getAllowedCount(room, structureType);
 }
 
+function getRecommendedWallTargetHits(room) {
+    if(!room.controller) {
+        return 1000;
+    }
+
+    if(room.controller.level >= 6) {
+        return 100000;
+    }
+
+    if(room.controller.level >= 5) {
+        return 50000;
+    }
+
+    if(room.controller.level >= 4) {
+        return 25000;
+    }
+
+    if(room.controller.level >= 3) {
+        return 10000;
+    }
+
+    return 1000;
+}
+
+function updateWallTargetHits(room, settings) {
+    if(settings.autoWallTargetHits === false) {
+        return;
+    }
+
+    var recommended = getRecommendedWallTargetHits(room);
+    if(room.memory.wallTargetHits === undefined || room.memory.wallTargetHits < recommended) {
+        room.memory.wallTargetHits = recommended;
+        debug.log(
+            'debugConstruction',
+            room.name + ' wall target hits now ' + recommended,
+            1
+        );
+    }
+}
+
 function canCreateSite(room, pos, structureType) {
     if(pos.roomName != room.name) {
         return false;
@@ -120,6 +164,11 @@ function canCreateSite(room, pos, structureType) {
     }
 
     if(hasConstructionSite(pos)) {
+        return false;
+    }
+
+    if((structureType == STRUCTURE_WALL || structureType == STRUCTURE_RAMPART) &&
+        isExitBuffer(pos)) {
         return false;
     }
 
@@ -529,6 +578,17 @@ function countDefenseConstructionSites(room) {
     });
 }
 
+function countDefenseStructuresAndSites(room) {
+    var structures = room.find(FIND_STRUCTURES, {
+        filter: function(structure) {
+            return structure.structureType == STRUCTURE_WALL ||
+                structure.structureType == STRUCTURE_RAMPART;
+        }
+    }).length;
+
+    return structures + countDefenseConstructionSites(room);
+}
+
 function hasTower(room) {
     var towers = room.find(FIND_MY_STRUCTURES, {
         filter: function(structure) {
@@ -567,7 +627,7 @@ function shouldPrioritizeDefense(room, settings) {
     }
 
     var minDefenseSites = settings.minDefenseSites || 4;
-    return countDefenseConstructionSites(room) < minDefenseSites;
+    return countDefenseStructuresAndSites(room) < minDefenseSites;
 }
 
 function countInfrastructureConstructionSites(room) {
@@ -738,20 +798,32 @@ function getExitCoordinate(pos) {
     return pos.x;
 }
 
+function getInteriorExitCoordinate(value) {
+    if(value <= 1) {
+        return 2;
+    }
+
+    if(value >= 48) {
+        return 47;
+    }
+
+    return value;
+}
+
 function getInteriorExitPos(room, pos) {
     if(pos.x === 0) {
-        return new RoomPosition(1, pos.y, room.name);
+        return new RoomPosition(2, getInteriorExitCoordinate(pos.y), room.name);
     }
 
     if(pos.x === 49) {
-        return new RoomPosition(48, pos.y, room.name);
+        return new RoomPosition(47, getInteriorExitCoordinate(pos.y), room.name);
     }
 
     if(pos.y === 0) {
-        return new RoomPosition(pos.x, 1, room.name);
+        return new RoomPosition(getInteriorExitCoordinate(pos.x), 2, room.name);
     }
 
-    return new RoomPosition(pos.x, 48, room.name);
+    return new RoomPosition(getInteriorExitCoordinate(pos.x), 47, room.name);
 }
 
 function groupExitSegments(room) {
@@ -892,6 +964,8 @@ var constructionManager = {
         }
 
         var settings = room.memory.construction || {};
+        updateWallTargetHits(room, settings);
+
         var maxTotalSites = settings.maxTotalSites || 20;
         var totalSites = room.find(FIND_CONSTRUCTION_SITES).length;
 
