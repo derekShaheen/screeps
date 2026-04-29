@@ -14,12 +14,77 @@ function announceIntent(creep, key, message) {
     creep.say(message);
 }
 
+function sameMoveTarget(a, b) {
+    return a &&
+        b &&
+        a.x == b.x &&
+        a.y == b.y &&
+        a.roomName == b.roomName;
+}
+
+function getMoveTargetPos(target) {
+    if(!target) {
+        return null;
+    }
+
+    if(target.pos) {
+        return target.pos;
+    }
+
+    if(target.x !== undefined && target.y !== undefined && target.roomName) {
+        return target;
+    }
+
+    return null;
+}
+
+function updateStuckState(creep, target) {
+    var targetPos = getMoveTargetPos(target);
+    if(!targetPos) {
+        delete creep.memory.moveState;
+        return 0;
+    }
+
+    var currentPos = {
+        x: creep.pos.x,
+        y: creep.pos.y,
+        roomName: creep.pos.roomName
+    };
+    var nextTarget = {
+        x: targetPos.x,
+        y: targetPos.y,
+        roomName: targetPos.roomName
+    };
+    var state = creep.memory.moveState || {};
+    var stuckTicks = 0;
+
+    if(sameMoveTarget(state.target, nextTarget) &&
+        sameMoveTarget(state.pos, currentPos)) {
+        stuckTicks = (state.stuckTicks || 0) + 1;
+    }
+
+    creep.memory.moveState = {
+        target: nextTarget,
+        pos: currentPos,
+        stuckTicks: stuckTicks
+    };
+
+    return stuckTicks;
+}
+
 function moveTo(creep, target, stroke, intentMessage, intentKey) {
     announceIntent(creep, intentKey || ('move:' + intentMessage), intentMessage);
 
+    var stuckTicks = updateStuckState(creep, target);
     var options = {
         reusePath: 5
     };
+
+    if(stuckTicks >= 2) {
+        options.reusePath = 0;
+        options.ignoreCreeps = true;
+        debug.log('debugRoles', creep.name + ' repathing through traffic after ' + stuckTicks + ' stuck ticks', 5);
+    }
 
     if(debug.enabled('debugVisuals') && debug.enabled('debugPaths')) {
         options.visualizePathStyle = {
@@ -571,6 +636,10 @@ function getOpenHarvestPositions(creep, source) {
     return openPositions;
 }
 
+function getQueueHarvestPositions(creep, source) {
+    return getAdjacentHarvestPositions(creep, source);
+}
+
 function getWaitingPositions(creep, source) {
     var positions = [];
     for(var range = 2; range <= 3; range++) {
@@ -587,7 +656,7 @@ function getWaitingPositions(creep, source) {
                 }
 
                 var pos = new RoomPosition(x, y, source.pos.roomName);
-                if(isWalkableHarvestPosition(pos, creep, false)) {
+                if(isWalkableHarvestPosition(pos, creep, true)) {
                     positions.push(pos);
                 }
             }
@@ -608,7 +677,7 @@ function getWaitingPositions(creep, source) {
 
 function getQueuedSourceDestination(creep, source, queue) {
     var index = getQueueIndex(queue, creep.name);
-    var harvestPositions = getOpenHarvestPositions(creep, source);
+    var harvestPositions = getQueueHarvestPositions(creep, source);
 
     if(index >= 0 && index < harvestPositions.length) {
         return harvestPositions[index];
@@ -631,11 +700,12 @@ function sourceQueueScore(creep, source) {
 
     var queue = pruneSourceQueue(creep.room, source);
     var harvestPositions = getAdjacentHarvestPositions(creep, source);
-    var slots = Math.max(harvestPositions.length, 1);
+    var waitingPositions = getWaitingPositions(creep, source);
+    var slots = Math.max(harvestPositions.length + waitingPositions.length, 1);
     var queuePressure = queue.creeps.length / slots;
     var energyBonus = source.energy > 0 ? -2 : 0;
 
-    return queuePressure * 10 + creep.pos.getRangeTo(source) + energyBonus;
+    return queuePressure * 20 + creep.pos.getRangeTo(source) + energyBonus;
 }
 
 function findQueuedSource(creep) {
@@ -779,7 +849,7 @@ function harvestQueuedSource(creep) {
     var queue = joinSourceQueue(creep, source);
     var destination = getQueuedSourceDestination(creep, source, queue);
     var index = getQueueIndex(queue, creep.name);
-    var harvestPositions = getOpenHarvestPositions(creep, source);
+    var harvestPositions = getQueueHarvestPositions(creep, source);
     var harvestPosition = index >= 0 && index < harvestPositions.length ? harvestPositions[index] : null;
     var canHarvestFromQueueSlot = harvestPosition && destination.isEqualTo(harvestPosition);
 
