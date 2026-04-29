@@ -362,8 +362,22 @@ function scaleUpgraders(room, counts, targets, constructionSites) {
 function scaleDefenders(room, targets) {
     var threatCount = getHostileThreatCount(room);
     var canUseDefenderSquad = room.energyCapacityAvailable >= bodyCost(MIN_DEFENDER_HEALER_BODY);
+    var hasTower = countStructures(room, STRUCTURE_TOWER) > 0;
+    var wantsStandingSquad = room.memory.keepDefenderSquad === true;
+    var needsDefense = threatCount > 0 || room.memory.defenseMode || wantsStandingSquad;
 
-    if(canUseDefenderSquad && (threatCount > 0 || room.memory.defenseMode)) {
+    if(!needsDefense && hasTower) {
+        targets.defender = 0;
+        room.memory.defenderSquadEnabled = false;
+        return;
+    }
+
+    if(!needsDefense) {
+        room.memory.defenderSquadEnabled = false;
+        return;
+    }
+
+    if(canUseDefenderSquad) {
         targets.defender = Math.max(targets.defender, 2);
     }
 
@@ -371,7 +385,7 @@ function scaleDefenders(room, targets) {
         targets.defender = Math.max(targets.defender, 3);
     }
 
-    if(canUseDefenderSquad && room.memory.keepDefenderSquad) {
+    if(canUseDefenderSquad && wantsStandingSquad) {
         targets.defender = Math.max(targets.defender, 2);
     }
 
