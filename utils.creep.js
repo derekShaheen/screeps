@@ -95,6 +95,7 @@ function retreatFromHostiles(creep, range) {
     }
 
     releaseEnergyQueue(creep);
+    releaseEnergyReservation(creep);
     announceIntent(creep, 'action:retreat', 'retreat');
 
     if(typeof PathFinder !== 'undefined') {
@@ -145,6 +146,7 @@ function setWorking(creep, working, label) {
         creep.memory.working = working;
         if(working) {
             releaseEnergyQueue(creep);
+            releaseEnergyReservation(creep);
         }
         debug.roleState(creep, working ? 'working' : 'gathering');
         if(label) {
@@ -223,6 +225,130 @@ function releaseEnergyQueue(creep) {
     }
 
     delete creep.memory.energySourceId;
+}
+
+function getRoomEnergyReservations(room) {
+    if(!room.memory.energyReservations) {
+        room.memory.energyReservations = {};
+    }
+
+    return room.memory.energyReservations;
+}
+
+function removeEnergyReservation(room, targetId, creepName) {
+    if(!room || !room.memory || !room.memory.energyReservations || !targetId) {
+        return;
+    }
+
+    var reservations = room.memory.energyReservations;
+    if(!reservations[targetId]) {
+        return;
+    }
+
+    delete reservations[targetId][creepName];
+    if(Object.keys(reservations[targetId]).length === 0) {
+        delete reservations[targetId];
+    }
+}
+
+function releaseEnergyReservation(creep) {
+    if(!creep.memory.energyReservation) {
+        return;
+    }
+
+    removeEnergyReservation(creep.room, creep.memory.energyReservation.targetId, creep.name);
+    delete creep.memory.energyReservation;
+}
+
+function pruneEnergyReservations(room) {
+    var reservations = getRoomEnergyReservations(room);
+    for(var targetId in reservations) {
+        var target = Game.getObjectById(targetId);
+        if(!target || !target.store || target.store[RESOURCE_ENERGY] <= 0) {
+            delete reservations[targetId];
+            continue;
+        }
+
+        for(var creepName in reservations[targetId]) {
+            var reservedCreep = Game.creeps[creepName];
+            if(!reservedCreep ||
+                reservedCreep.room.name != room.name ||
+                reservedCreep.store.getFreeCapacity(RESOURCE_ENERGY) === 0 ||
+                reservedCreep.memory.working) {
+                delete reservations[targetId][creepName];
+                if(reservedCreep &&
+                    reservedCreep.memory.energyReservation &&
+                    reservedCreep.memory.energyReservation.targetId == targetId) {
+                    delete reservedCreep.memory.energyReservation;
+                }
+            }
+        }
+
+        if(Object.keys(reservations[targetId]).length === 0) {
+            delete reservations[targetId];
+        }
+    }
+}
+
+function getReservedEnergy(room, targetId, exceptCreepName) {
+    pruneEnergyReservations(room);
+
+    var reservations = getRoomEnergyReservations(room);
+    var reserved = 0;
+    if(!reservations[targetId]) {
+        return reserved;
+    }
+
+    for(var creepName in reservations[targetId]) {
+        if(creepName != exceptCreepName) {
+            reserved += reservations[targetId][creepName];
+        }
+    }
+
+    return reserved;
+}
+
+function getAvailableStoredEnergy(creep, target) {
+    if(!target || !target.store) {
+        return 0;
+    }
+
+    return Math.max(0, target.store[RESOURCE_ENERGY] - getReservedEnergy(creep.room, target.id, creep.name));
+}
+
+function reserveEnergyTarget(creep, target) {
+    if(!target || !target.id || !target.store || !isSafeTarget(creep, target)) {
+        return false;
+    }
+
+    if(creep.memory.energyReservation &&
+        creep.memory.energyReservation.targetId != target.id) {
+        releaseEnergyReservation(creep);
+    }
+
+    var amount = Math.min(
+        creep.store.getFreeCapacity(RESOURCE_ENERGY),
+        getAvailableStoredEnergy(creep, target)
+    );
+
+    if(amount <= 0) {
+        releaseEnergyReservation(creep);
+        return false;
+    }
+
+    var reservations = getRoomEnergyReservations(creep.room);
+    if(!reservations[target.id]) {
+        reservations[target.id] = {};
+    }
+
+    reservations[target.id][creep.name] = amount;
+    creep.memory.energyReservation = {
+        targetId: target.id,
+        amount: amount,
+        tick: Game.time
+    };
+
+    return true;
 }
 
 function pruneSourceQueue(room, source) {
@@ -449,6 +575,14 @@ function findQueuedSource(creep) {
 
 function withdrawFromTarget(creep, target, moveIntent, actionIntent) {
     releaseEnergyQueue(creep);
+    if(target.store &&
+        (!creep.memory.energyReservation ||
+        creep.memory.energyReservation.targetId != target.id) &&
+        !reserveEnergyTarget(creep, target)) {
+        debug.log('debugRoles', creep.name + ' skipped reserved energy target', 5);
+        return false;
+    }
+
     var result = creep.withdraw(target, RESOURCE_ENERGY);
     if(result == ERR_NOT_IN_RANGE) {
         moveTo(
@@ -462,6 +596,7 @@ function withdrawFromTarget(creep, target, moveIntent, actionIntent) {
     }
 
     if(result == OK) {
+        releaseEnergyReservation(creep);
         announceIntent(
             creep,
             'action:' + (actionIntent || 'withdraw'),
@@ -470,11 +605,16 @@ function withdrawFromTarget(creep, target, moveIntent, actionIntent) {
         return true;
     }
 
+    if(result == ERR_NOT_ENOUGH_RESOURCES || result == ERR_INVALID_TARGET) {
+        releaseEnergyReservation(creep);
+    }
+
     return result == OK;
 }
 
 function pickupTarget(creep, target) {
     releaseEnergyQueue(creep);
+    releaseEnergyReservation(creep);
     var result = creep.pickup(target);
     if(result == ERR_NOT_IN_RANGE) {
         moveTo(creep, target, '#ffaa00', 'go pickup', 'move:pickup');
@@ -501,6 +641,7 @@ function rememberHarvestPosition(creep, source) {
 }
 
 function harvestTarget(creep, target) {
+    releaseEnergyReservation(creep);
     var result = creep.harvest(target);
     if(result == ERR_NOT_IN_RANGE) {
         moveTo(creep, target, '#ffaa00', 'go harvest', 'move:harvest');
@@ -517,6 +658,8 @@ function harvestTarget(creep, target) {
 }
 
 function harvestQueuedSource(creep) {
+    releaseEnergyReservation(creep);
+
     var source = findQueuedSource(creep);
     if(!source) {
         return false;
@@ -562,9 +705,22 @@ function harvestQueuedSource(creep) {
 }
 
 function findStoredEnergy(creep) {
+    if(creep.memory.energyReservation) {
+        var reservedTarget = Game.getObjectById(creep.memory.energyReservation.targetId);
+        if(reservedTarget &&
+            reservedTarget.room.name == creep.room.name &&
+            reservedTarget.store &&
+            reservedTarget.store[RESOURCE_ENERGY] > 0 &&
+            isSafeTarget(creep, reservedTarget)) {
+            return reservedTarget;
+        }
+
+        releaseEnergyReservation(creep);
+    }
+
     return creep.pos.findClosestByPath(FIND_STRUCTURES, {
         filter: function(structure) {
-            if(!structure.store || structure.store[RESOURCE_ENERGY] <= 0) {
+            if(!structure.store || getAvailableStoredEnergy(creep, structure) <= 0) {
                 return false;
             }
 
@@ -593,7 +749,7 @@ function findTombstoneEnergy(creep) {
     return creep.pos.findClosestByPath(FIND_TOMBSTONES, {
         filter: function(tombstone) {
             return tombstone.store &&
-                tombstone.store[RESOURCE_ENERGY] > 0 &&
+                getAvailableStoredEnergy(creep, tombstone) > 0 &&
                 isSafeTarget(creep, tombstone);
         }
     });
@@ -607,7 +763,7 @@ function findRuinEnergy(creep) {
     return creep.pos.findClosestByPath(FIND_RUINS, {
         filter: function(ruin) {
             return ruin.store &&
-                ruin.store[RESOURCE_ENERGY] > 0 &&
+                getAvailableStoredEnergy(creep, ruin) > 0 &&
                 isSafeTarget(creep, ruin);
         }
     });
@@ -618,6 +774,7 @@ function collectEnergy(creep, options) {
 
     if(creep.store.getFreeCapacity() === 0) {
         releaseEnergyQueue(creep);
+        releaseEnergyReservation(creep);
         return true;
     }
 
@@ -644,7 +801,7 @@ function collectEnergy(creep, options) {
 
     if(options.allowStored !== false) {
         var storedEnergy = findStoredEnergy(creep);
-        if(storedEnergy) {
+        if(storedEnergy && reserveEnergyTarget(creep, storedEnergy)) {
             return withdrawFromTarget(creep, storedEnergy);
         }
     }
@@ -712,9 +869,12 @@ function upgrade(creep) {
 module.exports = {
     announceIntent: announceIntent,
     collectEnergy: collectEnergy,
+    getAvailableStoredEnergy: getAvailableStoredEnergy,
     isSafeTarget: isSafeTarget,
     moveTo: moveTo,
+    releaseEnergyReservation: releaseEnergyReservation,
     releaseEnergyQueue: releaseEnergyQueue,
+    reserveEnergyTarget: reserveEnergyTarget,
     retreatFromHostiles: retreatFromHostiles,
     transferEnergy: transferEnergy,
     updateWorkingState: updateWorkingState,

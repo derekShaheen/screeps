@@ -21,7 +21,7 @@ function findSourceEnergy(creep) {
     return creep.pos.findClosestByPath(FIND_STRUCTURES, {
         filter: function(structure) {
             return isSourceContainer(structure) &&
-                structure.store[RESOURCE_ENERGY] > 0 &&
+                creepUtils.getAvailableStoredEnergy(creep, structure) > 0 &&
                 creepUtils.isSafeTarget(creep, structure);
         }
     });
@@ -30,7 +30,7 @@ function findSourceEnergy(creep) {
 function findFallbackStoredEnergy(creep) {
     return creep.pos.findClosestByPath(FIND_STRUCTURES, {
         filter: function(structure) {
-            if(!structure.store || structure.store[RESOURCE_ENERGY] <= 0) {
+            if(!structure.store || creepUtils.getAvailableStoredEnergy(creep, structure) <= 0) {
                 return false;
             }
 
@@ -46,6 +46,11 @@ function findFallbackStoredEnergy(creep) {
 }
 
 function withdrawEnergy(creep, target) {
+    if(!creepUtils.reserveEnergyTarget(creep, target)) {
+        debug.log('debugRoles', creep.name + ' skipped fully reserved energy at ' + formatPos(target.pos), 5);
+        return false;
+    }
+
     var result = creep.withdraw(target, RESOURCE_ENERGY);
     if(result == ERR_NOT_IN_RANGE) {
         creepUtils.moveTo(creep, target, '#ffaa00', 'go haul', 'move:haul');
@@ -53,9 +58,14 @@ function withdrawEnergy(creep, target) {
     }
 
     if(result == OK) {
+        creepUtils.releaseEnergyReservation(creep);
         creepUtils.announceIntent(creep, 'action:haul', 'haul');
         debug.log('debugRoles', creep.name + ' withdrew energy from ' + target.structureType + ' at ' + formatPos(target.pos), 5);
         return true;
+    }
+
+    if(result == ERR_NOT_ENOUGH_RESOURCES || result == ERR_INVALID_TARGET) {
+        creepUtils.releaseEnergyReservation(creep);
     }
 
     debug.log('debugRoles', creep.name + ' withdraw failed from ' + target.structureType + ': ' + result, 5);
