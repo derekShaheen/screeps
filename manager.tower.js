@@ -4,6 +4,14 @@ function formatPos(pos) {
     return pos.roomName + ':' + pos.x + ',' + pos.y;
 }
 
+function getTowerAttackEnergyCost() {
+    if(typeof TOWER_ENERGY_COST == 'number') {
+        return TOWER_ENERGY_COST;
+    }
+
+    return 10;
+}
+
 function findRepairTarget(room) {
     var wallTargetHits = room.memory.wallTargetHits || 1000;
     var critical = room.find(FIND_STRUCTURES, {
@@ -219,13 +227,34 @@ var towerManager = {
         for(var i = 0; i < towers.length; i++) {
             var tower = towers[i];
 
-            if(attackTarget && tower.store[RESOURCE_ENERGY] >= TOWER_ENERGY_COST) {
-                tower.attack(attackTarget);
+            if(attackTarget) {
+                var attackResult = tower.attack(attackTarget);
+                if(attackResult == OK) {
+                    debug.log(
+                        'debugDefense',
+                        tower.id + ' attacking ' + attackTarget.owner.username +
+                            ' hostile at ' + formatPos(attackTarget.pos) +
+                            ' hits ' + attackTarget.hits + '/' + attackTarget.hitsMax,
+                        3
+                    );
+                    continue;
+                }
+
+                if(tower.store[RESOURCE_ENERGY] < getTowerAttackEnergyCost()) {
+                    debug.log(
+                        'debugDefense',
+                        tower.id + ' cannot attack; energy ' +
+                            tower.store[RESOURCE_ENERGY] + '/' + getTowerAttackEnergyCost(),
+                        5
+                    );
+                    continue;
+                }
+
                 debug.log(
                     'debugDefense',
-                    tower.id + ' attacking ' + attackTarget.owner.username +
-                        ' hostile at ' + formatPos(attackTarget.pos) +
-                        ' hits ' + attackTarget.hits + '/' + attackTarget.hitsMax,
+                    tower.id + ' attack failed: ' + attackResult +
+                        ' target ' + attackTarget.owner.username +
+                        ' at ' + formatPos(attackTarget.pos),
                     3
                 );
                 continue;
