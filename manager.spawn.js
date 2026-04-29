@@ -71,16 +71,68 @@ function countRoles(room) {
     return counts;
 }
 
-function getTargets(room, counts) {
+function getMinimumTargets(room) {
     var memoryTargets = room.memory.creepTargets || BASE_TARGETS;
-    var targets = {
+    return {
         harvester: memoryTargets.harvester === undefined ? BASE_TARGETS.harvester : memoryTargets.harvester,
         upgrader: memoryTargets.upgrader === undefined ? BASE_TARGETS.upgrader : memoryTargets.upgrader,
         builder: memoryTargets.builder === undefined ? BASE_TARGETS.builder : memoryTargets.builder,
         defender: memoryTargets.defender === undefined ? BASE_TARGETS.defender : memoryTargets.defender
     };
+}
 
-    var constructionSites = room.find(FIND_CONSTRUCTION_SITES).length;
+function countStructures(room, structureType) {
+    return room.find(FIND_STRUCTURES, {
+        filter: function(structure) {
+            return structure.structureType == structureType;
+        }
+    }).length;
+}
+
+function hasStoredEnergy(room) {
+    var stores = room.find(FIND_STRUCTURES, {
+        filter: function(structure) {
+            return structure.store &&
+                structure.store[RESOURCE_ENERGY] >= 500 &&
+                (structure.structureType == STRUCTURE_STORAGE ||
+                structure.structureType == STRUCTURE_CONTAINER);
+        }
+    });
+
+    return stores.length > 0;
+}
+
+function getHostileThreatCount(room) {
+    var hostiles = room.find(FIND_HOSTILE_CREEPS, {
+        filter: function(creep) {
+            return creep.getActiveBodyparts(ATTACK) > 0 ||
+                creep.getActiveBodyparts(RANGED_ATTACK) > 0 ||
+                creep.getActiveBodyparts(WORK) > 0 ||
+                creep.getActiveBodyparts(CLAIM) > 0;
+        }
+    });
+
+    return hostiles.length;
+}
+
+function scaleHarvesters(room, targets) {
+    var sourceCount = room.find(FIND_SOURCES).length;
+    targets.harvester = Math.max(targets.harvester, sourceCount);
+
+    if(room.energyCapacityAvailable >= 550) {
+        targets.harvester = Math.max(targets.harvester, sourceCount + 1);
+    }
+
+    if(room.energyCapacityAvailable >= 800 && countStructures(room, STRUCTURE_EXTENSION) >= 5) {
+        targets.harvester = Math.max(targets.harvester, sourceCount + 2);
+    }
+
+    if(room.controller && room.controller.level >= 4 && hasStoredEnergy(room)) {
+        targets.harvester = Math.max(targets.harvester, sourceCount + 2);
+    }
+}
+
+function scaleBuilders(room, targets, constructionSites) {
     if(constructionSites >= 5) {
         targets.builder = Math.max(targets.builder, 2);
     }
@@ -89,6 +141,16 @@ function getTargets(room, counts) {
         targets.builder = Math.max(targets.builder, 3);
     }
 
+    if(constructionSites >= 30) {
+        targets.builder = Math.max(targets.builder, 4);
+    }
+
+    if(room.controller && room.controller.level >= 4 && constructionSites >= 10) {
+        targets.builder = Math.max(targets.builder, 3);
+    }
+}
+
+function scaleUpgraders(room, counts, targets, constructionSites) {
     var energyStable = room.energyCapacityAvailable >= 550 &&
         room.energyAvailable == room.energyCapacityAvailable &&
         constructionSites < 5 &&
@@ -97,6 +159,43 @@ function getTargets(room, counts) {
     if(energyStable) {
         targets.upgrader = Math.max(targets.upgrader, 2);
     }
+
+    if(energyStable && room.energyCapacityAvailable >= 800 && hasStoredEnergy(room)) {
+        targets.upgrader = Math.max(targets.upgrader, 3);
+    }
+
+    if(energyStable &&
+        room.controller &&
+        room.controller.level >= 4 &&
+        room.energyCapacityAvailable >= 1300 &&
+        hasStoredEnergy(room)) {
+        targets.upgrader = Math.max(targets.upgrader, 4);
+    }
+}
+
+function scaleDefenders(room, targets) {
+    var threatCount = getHostileThreatCount(room);
+    if(threatCount > 0 || room.memory.defenseMode) {
+        targets.defender = Math.max(targets.defender, 2);
+    }
+
+    if(threatCount >= 2) {
+        targets.defender = Math.max(targets.defender, 3);
+    }
+
+    if(room.controller && room.controller.level >= 4 && countStructures(room, STRUCTURE_TOWER) > 0) {
+        targets.defender = Math.max(targets.defender, 2);
+    }
+}
+
+function getTargets(room, counts) {
+    var targets = getMinimumTargets(room);
+    var constructionSites = room.find(FIND_CONSTRUCTION_SITES).length;
+
+    scaleHarvesters(room, targets);
+    scaleBuilders(room, targets, constructionSites);
+    scaleUpgraders(room, counts, targets, constructionSites);
+    scaleDefenders(room, targets);
 
     return targets;
 }
@@ -114,6 +213,23 @@ function getSpawnRole(counts, targets) {
     }
 
     return null;
+}
+
+function formatTargets(targets) {
+    return 'H ' + targets.harvester +
+        ' B ' + targets.builder +
+        ' U ' + targets.upgrader +
+        ' D ' + targets.defender;
+}
+
+function logTargetChanges(room, targets) {
+    var targetString = formatTargets(targets);
+    if(room.memory.lastSpawnTargets == targetString) {
+        return;
+    }
+
+    room.memory.lastSpawnTargets = targetString;
+    debug.log('debugSpawn', room.name + ' spawn targets now ' + targetString, 1);
 }
 
 function makeCreepName(role) {
@@ -159,6 +275,7 @@ var spawnManager = {
 
         var counts = countRoles(spawn.room);
         var targets = getTargets(spawn.room, counts);
+        logTargetChanges(spawn.room, targets);
         var role = getSpawnRole(counts, targets);
 
         if(!role) {
