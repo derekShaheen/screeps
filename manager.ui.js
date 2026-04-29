@@ -50,6 +50,84 @@ function getTowerText(room) {
     return towers.length + ' | ' + energy + '/' + capacity;
 }
 
+function getDefenseSiteText(room) {
+    var counts = {
+        wall: 0,
+        rampart: 0
+    };
+
+    var sites = room.find(FIND_CONSTRUCTION_SITES, {
+        filter: function(site) {
+            return site.structureType == STRUCTURE_WALL ||
+                site.structureType == STRUCTURE_RAMPART;
+        }
+    });
+
+    for(var i = 0; i < sites.length; i++) {
+        if(sites[i].structureType == STRUCTURE_WALL) {
+            counts.wall++;
+        }
+
+        if(sites[i].structureType == STRUCTURE_RAMPART) {
+            counts.rampart++;
+        }
+    }
+
+    return 'W ' + counts.wall + ' | R ' + counts.rampart;
+}
+
+function getInfrastructureSiteText(room) {
+    var counts = {
+        extension: 0,
+        road: 0,
+        tower: 0,
+        container: 0,
+        storage: 0
+    };
+
+    var sites = room.find(FIND_CONSTRUCTION_SITES, {
+        filter: function(site) {
+            return site.structureType == STRUCTURE_EXTENSION ||
+                site.structureType == STRUCTURE_ROAD ||
+                site.structureType == STRUCTURE_TOWER ||
+                site.structureType == STRUCTURE_CONTAINER ||
+                site.structureType == STRUCTURE_STORAGE;
+        }
+    });
+
+    for(var i = 0; i < sites.length; i++) {
+        if(siteIs(sites[i], STRUCTURE_EXTENSION)) {
+            counts.extension++;
+        }
+
+        if(siteIs(sites[i], STRUCTURE_ROAD)) {
+            counts.road++;
+        }
+
+        if(siteIs(sites[i], STRUCTURE_TOWER)) {
+            counts.tower++;
+        }
+
+        if(siteIs(sites[i], STRUCTURE_CONTAINER)) {
+            counts.container++;
+        }
+
+        if(siteIs(sites[i], STRUCTURE_STORAGE)) {
+            counts.storage++;
+        }
+    }
+
+    return 'E ' + counts.extension +
+        ' | R ' + counts.road +
+        ' | T ' + counts.tower +
+        ' | C ' + counts.container +
+        ' | S ' + counts.storage;
+}
+
+function siteIs(site, structureType) {
+    return site.structureType == structureType;
+}
+
 var uiManager = {
     run: function(room) {
         if(!debug.enabled('debugVisuals')) {
@@ -75,6 +153,8 @@ var uiManager = {
             'Hostiles: ' + hostiles,
             'Towers: ' + getTowerText(room),
             'Walls: target ' + wallTarget,
+            'Infra sites: ' + getInfrastructureSiteText(room),
+            'Defense sites: ' + getDefenseSiteText(room),
             'Sites: ' + sites
         ];
 

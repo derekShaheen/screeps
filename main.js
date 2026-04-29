@@ -1,4 +1,5 @@
 var debug = require('utils.debug');
+var constructionManager = require('manager.construction');
 var spawnManager = require('manager.spawn');
 var towerManager = require('manager.tower');
 var uiManager = require('manager.ui');
@@ -13,7 +14,22 @@ var DEFAULT_ROOM_MEMORY = {
         builder: 1
     },
     wallTargetHits: 1000,
-    defenseMode: false
+    defenseMode: false,
+    construction: {
+        autoExtensions: true,
+        autoTowers: true,
+        autoStorage: true,
+        autoContainers: true,
+        autoRoads: true,
+        autoRamparts: true,
+        autoExitWalls: true,
+        maxTotalSites: 20,
+        maxInfrastructureSites: 12,
+        maxNewInfrastructureSitesPerTick: 4,
+        maxDefenseSites: 12,
+        maxNewDefenseSitesPerTick: 3,
+        minWallRcl: 2
+    }
 };
 
 function cleanupCreepMemory() {
@@ -56,6 +72,16 @@ function initializeRoomMemory(room) {
     if(memory.defenseMode === undefined) {
         memory.defenseMode = DEFAULT_ROOM_MEMORY.defenseMode;
     }
+
+    if(!memory.construction) {
+        memory.construction = {};
+    }
+
+    for(var constructionKey in DEFAULT_ROOM_MEMORY.construction) {
+        if(memory.construction[constructionKey] === undefined) {
+            memory.construction[constructionKey] = DEFAULT_ROOM_MEMORY.construction[constructionKey];
+        }
+    }
 }
 
 function runCreep(creep) {
@@ -87,6 +113,10 @@ module.exports.loop = function () {
 
     for(var towerRoomName in Game.rooms) {
         towerManager.run(Game.rooms[towerRoomName]);
+    }
+
+    for(var constructionRoomName in Game.rooms) {
+        constructionManager.run(Game.rooms[constructionRoomName]);
     }
 
     for(var spawnName in Game.spawns) {

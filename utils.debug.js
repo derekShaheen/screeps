@@ -3,6 +3,7 @@ var DEFAULT_SETTINGS = {
     debugRoles: true,
     debugSpawn: true,
     debugDefense: true,
+    debugConstruction: true,
     debugVisuals: true,
     debugPaths: true,
     debugInterval: 5
