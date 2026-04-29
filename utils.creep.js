@@ -340,6 +340,19 @@ function getAdjacentHarvestPositions(creep, source) {
     return positions;
 }
 
+function getOpenHarvestPositions(creep, source) {
+    var positions = getAdjacentHarvestPositions(creep, source);
+    var openPositions = [];
+
+    for(var i = 0; i < positions.length; i++) {
+        if(isWalkableHarvestPosition(positions[i], creep, false)) {
+            openPositions.push(positions[i]);
+        }
+    }
+
+    return openPositions;
+}
+
 function getWaitingPositions(creep, source) {
     var positions = [];
     for(var range = 2; range <= 3; range++) {
@@ -377,12 +390,10 @@ function getWaitingPositions(creep, source) {
 
 function getQueuedSourceDestination(creep, source, queue) {
     var index = getQueueIndex(queue, creep.name);
-    var harvestPositions = getAdjacentHarvestPositions(creep, source);
+    var harvestPositions = getOpenHarvestPositions(creep, source);
 
     if(index >= 0 && index < harvestPositions.length) {
-        if(isWalkableHarvestPosition(harvestPositions[index], creep, false)) {
-            return harvestPositions[index];
-        }
+        return harvestPositions[index];
     }
 
     var waitingPositions = getWaitingPositions(creep, source);
@@ -514,7 +525,7 @@ function harvestQueuedSource(creep) {
     var queue = joinSourceQueue(creep, source);
     var destination = getQueuedSourceDestination(creep, source, queue);
     var index = getQueueIndex(queue, creep.name);
-    var harvestPositions = getAdjacentHarvestPositions(creep, source);
+    var harvestPositions = getOpenHarvestPositions(creep, source);
     var harvestPosition = index >= 0 && index < harvestPositions.length ? harvestPositions[index] : null;
     var canHarvestFromQueueSlot = harvestPosition && destination.isEqualTo(harvestPosition);
 

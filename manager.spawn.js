@@ -147,6 +147,10 @@ function scaleHarvesters(room, targets) {
     var sourceCount = room.find(FIND_SOURCES).length;
     targets.harvester = Math.max(targets.harvester, sourceCount);
 
+    if(countSourceContainers(room) >= sourceCount) {
+        return;
+    }
+
     if(room.energyCapacityAvailable >= 550) {
         targets.harvester = Math.max(targets.harvester, sourceCount + 1);
     }

@@ -77,6 +77,25 @@ function countAssignedHarvesters(room, sourceId, selfName) {
     return count;
 }
 
+function countContainerMiners(room, sourceId, selfName) {
+    var count = 0;
+    for(var name in Game.creeps) {
+        var creep = Game.creeps[name];
+        if(creep.name == selfName) {
+            continue;
+        }
+
+        if(creep.room.name == room.name &&
+            creep.memory.role == 'harvester' &&
+            creep.memory.containerSourceId == sourceId &&
+            !creep.spawning) {
+            count++;
+        }
+    }
+
+    return count;
+}
+
 function getSourceContainer(source) {
     var containers = source.pos.findInRange(FIND_STRUCTURES, 1, {
         filter: function(structure) {
@@ -89,6 +108,46 @@ function getSourceContainer(source) {
     });
 
     return containers[0] || null;
+}
+
+function sourceHasUsableContainer(creep, source) {
+    var container = getSourceContainer(source);
+    return container && creepUtils.isSafeTarget(creep, container);
+}
+
+function chooseContainerSource(creep) {
+    if(creep.memory.containerSourceId) {
+        var remembered = Game.getObjectById(creep.memory.containerSourceId);
+        if(remembered &&
+            remembered.room.name == creep.room.name &&
+            creepUtils.isSafeTarget(creep, remembered) &&
+            sourceHasUsableContainer(creep, remembered) &&
+            countContainerMiners(creep.room, remembered.id, creep.name) === 0) {
+            return remembered;
+        }
+
+        delete creep.memory.containerSourceId;
+    }
+
+    var sources = creep.room.find(FIND_SOURCES, {
+        filter: function(source) {
+            return creepUtils.isSafeTarget(creep, source) &&
+                sourceHasUsableContainer(creep, source) &&
+                countContainerMiners(creep.room, source.id, creep.name) === 0;
+        }
+    });
+
+    if(!sources.length) {
+        return null;
+    }
+
+    sources.sort(function(a, b) {
+        return creep.pos.getRangeTo(a) - creep.pos.getRangeTo(b);
+    });
+
+    creep.memory.containerSourceId = sources[0].id;
+    creep.memory.harvestSourceId = sources[0].id;
+    return sources[0];
 }
 
 function chooseHarvestSource(creep) {
@@ -135,6 +194,16 @@ function isContainerOccupiedByOther(creep, container) {
 }
 
 function harvestToContainer(creep, source, container) {
+    if(creep.store.getFreeCapacity(RESOURCE_ENERGY) === 0 &&
+        container.store.getFreeCapacity(RESOURCE_ENERGY) === 0) {
+        debug.log(
+            'debugRoles',
+            creep.name + ' source container is full; delivering instead of waiting at ' + formatPos(container.pos),
+            5
+        );
+        return false;
+    }
+
     var shouldDeposit = creep.store[RESOURCE_ENERGY] > 0 &&
         container.store.getFreeCapacity(RESOURCE_ENERGY) > 0 &&
         (creep.store.getFreeCapacity(RESOURCE_ENERGY) === 0 || source.energy === 0);
@@ -186,19 +255,31 @@ function harvestToContainer(creep, source, container) {
 
 function runContainerHarvesting(creep) {
     if(!roomHasTransporter(creep.room) && findSpawnOrExtensionTarget(creep)) {
+        delete creep.memory.containerSourceId;
         return false;
     }
 
-    var source = chooseHarvestSource(creep);
+    var source = chooseContainerSource(creep);
     if(!source) {
         return false;
     }
 
     var container = getSourceContainer(source);
     if(!container || !creepUtils.isSafeTarget(creep, container)) {
+        delete creep.memory.containerSourceId;
         return false;
     }
 
+    if(creep.store.getFreeCapacity(RESOURCE_ENERGY) === 0 && creep.pos.getRangeTo(container) > 1) {
+        debug.log(
+            'debugRoles',
+            creep.name + ' is full away from its source container; delivering instead',
+            5
+        );
+        return false;
+    }
+
+    creepUtils.releaseEnergyQueue(creep);
     return harvestToContainer(creep, source, container);
 }
 
