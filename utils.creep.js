@@ -65,6 +65,93 @@ function isSafeTarget(creep, target, range) {
     return threats.length === 0;
 }
 
+function getTargetPos(target) {
+    if(!target) {
+        return null;
+    }
+
+    if(target.pos) {
+        return target.pos;
+    }
+
+    if(target.x !== undefined && target.y !== undefined && target.roomName) {
+        return target;
+    }
+
+    return null;
+}
+
+function getDecayTicks(target) {
+    if(!target) {
+        return null;
+    }
+
+    if(typeof target.ticksToLive == 'number') {
+        return target.ticksToLive;
+    }
+
+    if(typeof target.ticksToDecay == 'number') {
+        return target.ticksToDecay;
+    }
+
+    return null;
+}
+
+function getTravelTicks(creep, target, range) {
+    var targetPos = getTargetPos(target);
+    var targetRange = range === undefined ? 1 : range;
+
+    if(!creep || !creep.pos || !targetPos) {
+        return 0;
+    }
+
+    if(creep.pos.inRangeTo(targetPos, targetRange)) {
+        return 0;
+    }
+
+    var path = creep.pos.findPathTo(targetPos, {
+        ignoreCreeps: true,
+        range: targetRange
+    });
+
+    if(!path.length) {
+        return null;
+    }
+
+    return path.length;
+}
+
+function canReachBeforeDecay(creep, target, range) {
+    var targetPos = getTargetPos(target);
+    if(!creep || !creep.pos || !targetPos) {
+        return true;
+    }
+
+    var sourceTicks = getDecayTicks(creep);
+    var targetTicks = getDecayTicks(target);
+    if(sourceTicks === null && targetTicks === null) {
+        return true;
+    }
+
+    var targetRange = range === undefined ? 1 : range;
+    var minimumTravelTicks = 0;
+    if(creep.pos.roomName == targetPos.roomName) {
+        minimumTravelTicks = Math.max(0, creep.pos.getRangeTo(targetPos) - targetRange);
+    }
+    if((sourceTicks !== null && sourceTicks <= minimumTravelTicks) ||
+        (targetTicks !== null && targetTicks <= minimumTravelTicks)) {
+        return false;
+    }
+
+    var travelTicks = getTravelTicks(creep, targetPos, targetRange);
+    if(travelTicks === null) {
+        return false;
+    }
+
+    return (sourceTicks === null || sourceTicks > travelTicks) &&
+        (targetTicks === null || targetTicks > travelTicks);
+}
+
 function findNearbyThreats(creep, range) {
     return creep.pos.findInRange(FIND_HOSTILE_CREEPS, range, {
         filter: function(hostile) {
@@ -174,7 +261,8 @@ function updateWorkingState(creep, workingLabel, gatheringLabel) {
 function findNearestSource(creep) {
     return creep.pos.findClosestByPath(FIND_SOURCES, {
         filter: function(source) {
-            return isSafeTarget(creep, source);
+            return isSafeTarget(creep, source) &&
+                canReachBeforeDecay(creep, source, 1);
         }
     });
 }
@@ -317,7 +405,11 @@ function getAvailableStoredEnergy(creep, target) {
 }
 
 function reserveEnergyTarget(creep, target) {
-    if(!target || !target.id || !target.store || !isSafeTarget(creep, target)) {
+    if(!target ||
+        !target.id ||
+        !target.store ||
+        !isSafeTarget(creep, target) ||
+        !canReachBeforeDecay(creep, target, 1)) {
         return false;
     }
 
@@ -532,7 +624,8 @@ function getQueuedSourceDestination(creep, source, queue) {
 }
 
 function sourceQueueScore(creep, source) {
-    if(!isSafeTarget(creep, source)) {
+    if(!isSafeTarget(creep, source) ||
+        !canReachBeforeDecay(creep, source, 1)) {
         return 9999 + creep.pos.getRangeTo(source);
     }
 
@@ -550,7 +643,8 @@ function findQueuedSource(creep) {
         var existingSource = Game.getObjectById(creep.memory.energySourceId);
         if(existingSource &&
             existingSource.room.name == creep.room.name &&
-            isSafeTarget(creep, existingSource)) {
+            isSafeTarget(creep, existingSource) &&
+            canReachBeforeDecay(creep, existingSource, 1)) {
             return existingSource;
         }
 
@@ -559,7 +653,8 @@ function findQueuedSource(creep) {
 
     var sources = creep.room.find(FIND_SOURCES, {
         filter: function(source) {
-            return isSafeTarget(creep, source);
+            return isSafeTarget(creep, source) &&
+                canReachBeforeDecay(creep, source, 1);
         }
     });
     if(!sources.length) {
@@ -575,6 +670,12 @@ function findQueuedSource(creep) {
 
 function withdrawFromTarget(creep, target, moveIntent, actionIntent) {
     releaseEnergyQueue(creep);
+    if(!canReachBeforeDecay(creep, target, 1)) {
+        releaseEnergyReservation(creep);
+        debug.log('debugRoles', creep.name + ' skipped decaying energy target', 5);
+        return false;
+    }
+
     if(target.store &&
         (!creep.memory.energyReservation ||
         creep.memory.energyReservation.targetId != target.id) &&
@@ -615,6 +716,11 @@ function withdrawFromTarget(creep, target, moveIntent, actionIntent) {
 function pickupTarget(creep, target) {
     releaseEnergyQueue(creep);
     releaseEnergyReservation(creep);
+    if(!canReachBeforeDecay(creep, target, 1)) {
+        debug.log('debugRoles', creep.name + ' skipped decaying pickup target', 5);
+        return false;
+    }
+
     var result = creep.pickup(target);
     if(result == ERR_NOT_IN_RANGE) {
         moveTo(creep, target, '#ffaa00', 'go pickup', 'move:pickup');
@@ -642,6 +748,11 @@ function rememberHarvestPosition(creep, source) {
 
 function harvestTarget(creep, target) {
     releaseEnergyReservation(creep);
+    if(!canReachBeforeDecay(creep, target, 1)) {
+        debug.log('debugRoles', creep.name + ' skipped unreachable harvest target before decay', 5);
+        return false;
+    }
+
     var result = creep.harvest(target);
     if(result == ERR_NOT_IN_RANGE) {
         moveTo(creep, target, '#ffaa00', 'go harvest', 'move:harvest');
@@ -671,6 +782,12 @@ function harvestQueuedSource(creep) {
     var harvestPositions = getOpenHarvestPositions(creep, source);
     var harvestPosition = index >= 0 && index < harvestPositions.length ? harvestPositions[index] : null;
     var canHarvestFromQueueSlot = harvestPosition && destination.isEqualTo(harvestPosition);
+
+    if(!canReachBeforeDecay(creep, destination, 0)) {
+        debug.log('debugRoles', creep.name + ' skipped source queue destination that will decay before arrival', 5);
+        releaseEnergyQueue(creep);
+        return false;
+    }
 
     if(!creep.pos.isEqualTo(destination)) {
         debug.log(
@@ -711,7 +828,8 @@ function findStoredEnergy(creep) {
             reservedTarget.room.name == creep.room.name &&
             reservedTarget.store &&
             reservedTarget.store[RESOURCE_ENERGY] > 0 &&
-            isSafeTarget(creep, reservedTarget)) {
+            isSafeTarget(creep, reservedTarget) &&
+            canReachBeforeDecay(creep, reservedTarget, 1)) {
             return reservedTarget;
         }
 
@@ -725,6 +843,7 @@ function findStoredEnergy(creep) {
             }
 
             return isSafeTarget(creep, structure) &&
+                canReachBeforeDecay(creep, structure, 1) &&
                 (structure.structureType == STRUCTURE_CONTAINER ||
                 structure.structureType == STRUCTURE_STORAGE);
         }
@@ -736,7 +855,8 @@ function findDroppedEnergy(creep) {
         filter: function(resource) {
             return resource.resourceType == RESOURCE_ENERGY &&
                 resource.amount > 0 &&
-                isSafeTarget(creep, resource);
+                isSafeTarget(creep, resource) &&
+                canReachBeforeDecay(creep, resource, 1);
         }
     });
 }
@@ -750,7 +870,8 @@ function findTombstoneEnergy(creep) {
         filter: function(tombstone) {
             return tombstone.store &&
                 getAvailableStoredEnergy(creep, tombstone) > 0 &&
-                isSafeTarget(creep, tombstone);
+                isSafeTarget(creep, tombstone) &&
+                canReachBeforeDecay(creep, tombstone, 1);
         }
     });
 }
@@ -764,7 +885,8 @@ function findRuinEnergy(creep) {
         filter: function(ruin) {
             return ruin.store &&
                 getAvailableStoredEnergy(creep, ruin) > 0 &&
-                isSafeTarget(creep, ruin);
+                isSafeTarget(creep, ruin) &&
+                canReachBeforeDecay(creep, ruin, 1);
         }
     });
 }
@@ -827,6 +949,11 @@ function transferEnergy(creep, target) {
         return false;
     }
 
+    if(!canReachBeforeDecay(creep, target, 1)) {
+        debug.log('debugRoles', creep.name + ' skipped transfer target that will decay before arrival', 5);
+        return false;
+    }
+
     var result = creep.transfer(target, RESOURCE_ENERGY);
     if(result == ERR_NOT_IN_RANGE) {
         moveTo(creep, target, '#ffffff', 'go fill', 'move:fill');
@@ -852,6 +979,11 @@ function upgrade(creep) {
         return false;
     }
 
+    if(!canReachBeforeDecay(creep, creep.room.controller, 3)) {
+        debug.log('debugRoles', creep.name + ' cannot reach controller before decay', 5);
+        return false;
+    }
+
     var result = creep.upgradeController(creep.room.controller);
     if(result == ERR_NOT_IN_RANGE) {
         moveTo(creep, creep.room.controller, '#ffffff', 'go upgrade', 'move:upgrade');
@@ -868,6 +1000,7 @@ function upgrade(creep) {
 
 module.exports = {
     announceIntent: announceIntent,
+    canReachBeforeDecay: canReachBeforeDecay,
     collectEnergy: collectEnergy,
     getAvailableStoredEnergy: getAvailableStoredEnergy,
     isSafeTarget: isSafeTarget,

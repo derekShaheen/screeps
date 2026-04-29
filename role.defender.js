@@ -2,7 +2,11 @@ var creepUtils = require('utils.creep');
 var debug = require('utils.debug');
 
 function findHostile(creep) {
-    return creep.pos.findClosestByPath(FIND_HOSTILE_CREEPS);
+    return creep.pos.findClosestByPath(FIND_HOSTILE_CREEPS, {
+        filter: function(hostile) {
+            return creepUtils.canReachBeforeDecay(creep, hostile, 1);
+        }
+    });
 }
 
 function getGuardTarget(creep) {
@@ -20,6 +24,11 @@ function getGuardTarget(creep) {
 }
 
 function attackHostile(creep, hostile) {
+    if(!creepUtils.canReachBeforeDecay(creep, hostile, 1)) {
+        debug.log('debugDefense', creep.name + ' skipped hostile that will decay before arrival', 5);
+        return false;
+    }
+
     var result = creep.attack(hostile);
     if(result == ERR_NOT_IN_RANGE) {
         debug.log('debugDefense', creep.name + ' moving to defend against hostile in ' + creep.room.name, 3);
@@ -39,6 +48,11 @@ function attackHostile(creep, hostile) {
 
 function guardBase(creep) {
     var target = getGuardTarget(creep);
+    if(!creepUtils.canReachBeforeDecay(creep, target, 3)) {
+        debug.log('debugDefense', creep.name + ' cannot reach guard target before decay', 5);
+        return;
+    }
+
     if(creep.pos.getRangeTo(target) > 3) {
         creepUtils.moveTo(creep, target, '#ffcc00', 'guard', 'move:guard');
         return;

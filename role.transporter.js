@@ -22,7 +22,8 @@ function findSourceEnergy(creep) {
         filter: function(structure) {
             return isSourceContainer(structure) &&
                 creepUtils.getAvailableStoredEnergy(creep, structure) > 0 &&
-                creepUtils.isSafeTarget(creep, structure);
+                creepUtils.isSafeTarget(creep, structure) &&
+                creepUtils.canReachBeforeDecay(creep, structure, 1);
         }
     });
 }
@@ -40,7 +41,8 @@ function findFallbackStoredEnergy(creep) {
 
             return (structure.structureType == STRUCTURE_CONTAINER ||
                 structure.structureType == STRUCTURE_STORAGE) &&
-                creepUtils.isSafeTarget(creep, structure);
+                creepUtils.isSafeTarget(creep, structure) &&
+                creepUtils.canReachBeforeDecay(creep, structure, 1);
         }
     });
 }
@@ -78,7 +80,8 @@ function findSpawnFillTarget(creep) {
             return (structure.structureType == STRUCTURE_SPAWN ||
                 structure.structureType == STRUCTURE_EXTENSION) &&
                 structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0 &&
-                creepUtils.isSafeTarget(creep, structure);
+                creepUtils.isSafeTarget(creep, structure) &&
+                creepUtils.canReachBeforeDecay(creep, structure, 1);
         }
     });
 }
@@ -88,7 +91,8 @@ function findTowerFillTarget(creep) {
         filter: function(structure) {
             return structure.structureType == STRUCTURE_TOWER &&
                 structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0 &&
-                creepUtils.isSafeTarget(creep, structure);
+                creepUtils.isSafeTarget(creep, structure) &&
+                creepUtils.canReachBeforeDecay(creep, structure, 1);
         }
     });
 }
@@ -102,7 +106,8 @@ function findControllerContainerTarget(creep) {
         filter: function(structure) {
             return isControllerContainer(structure) &&
                 structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0 &&
-                creepUtils.isSafeTarget(creep, structure);
+                creepUtils.isSafeTarget(creep, structure) &&
+                creepUtils.canReachBeforeDecay(creep, structure, 1);
         }
     });
 }
@@ -112,7 +117,8 @@ function findStorageTarget(creep) {
         filter: function(structure) {
             return structure.structureType == STRUCTURE_STORAGE &&
                 structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0 &&
-                creepUtils.isSafeTarget(creep, structure);
+                creepUtils.isSafeTarget(creep, structure) &&
+                creepUtils.canReachBeforeDecay(creep, structure, 1);
         }
     });
 }
@@ -131,7 +137,9 @@ function idleNearBase(creep) {
         }
     });
 
-    if(spawn && creep.pos.getRangeTo(spawn) > 3) {
+    if(spawn &&
+        creep.pos.getRangeTo(spawn) > 3 &&
+        creepUtils.canReachBeforeDecay(creep, spawn, 3)) {
         creepUtils.moveTo(creep, spawn, '#66ccff', 'idle', 'move:idle');
         return;
     }

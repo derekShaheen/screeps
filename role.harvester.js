@@ -22,7 +22,8 @@ function findSpawnOrExtensionTarget(creep) {
             return (structure.structureType == STRUCTURE_SPAWN ||
                 structure.structureType == STRUCTURE_EXTENSION) &&
                 structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0 &&
-                creepUtils.isSafeTarget(creep, structure);
+                creepUtils.isSafeTarget(creep, structure) &&
+                creepUtils.canReachBeforeDecay(creep, structure, 1);
         }
     });
 }
@@ -38,7 +39,8 @@ function findFillTarget(creep) {
         filter: function(structure) {
             return structure.structureType == STRUCTURE_TOWER &&
                 structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0 &&
-                creepUtils.isSafeTarget(creep, structure);
+                creepUtils.isSafeTarget(creep, structure) &&
+                creepUtils.canReachBeforeDecay(creep, structure, 1);
         }
     });
 
@@ -54,7 +56,8 @@ function findFillTarget(creep) {
 
             return (structure.structureType == STRUCTURE_STORAGE ||
                 structure.structureType == STRUCTURE_CONTAINER) &&
-                creepUtils.isSafeTarget(creep, structure);
+                creepUtils.isSafeTarget(creep, structure) &&
+                creepUtils.canReachBeforeDecay(creep, structure, 1);
         }
     });
 }
@@ -112,7 +115,10 @@ function getSourceContainer(source) {
 
 function sourceHasUsableContainer(creep, source) {
     var container = getSourceContainer(source);
-    return container && creepUtils.isSafeTarget(creep, container);
+    return container &&
+        creepUtils.isSafeTarget(creep, container) &&
+        creepUtils.canReachBeforeDecay(creep, source, 1) &&
+        creepUtils.canReachBeforeDecay(creep, container, 0);
 }
 
 function chooseContainerSource(creep) {
@@ -121,6 +127,7 @@ function chooseContainerSource(creep) {
         if(remembered &&
             remembered.room.name == creep.room.name &&
             creepUtils.isSafeTarget(creep, remembered) &&
+            creepUtils.canReachBeforeDecay(creep, remembered, 1) &&
             sourceHasUsableContainer(creep, remembered) &&
             countContainerMiners(creep.room, remembered.id, creep.name) === 0) {
             return remembered;
@@ -132,6 +139,7 @@ function chooseContainerSource(creep) {
     var sources = creep.room.find(FIND_SOURCES, {
         filter: function(source) {
             return creepUtils.isSafeTarget(creep, source) &&
+                creepUtils.canReachBeforeDecay(creep, source, 1) &&
                 sourceHasUsableContainer(creep, source) &&
                 countContainerMiners(creep.room, source.id, creep.name) === 0;
         }
@@ -153,14 +161,18 @@ function chooseContainerSource(creep) {
 function chooseHarvestSource(creep) {
     if(creep.memory.harvestSourceId) {
         var remembered = Game.getObjectById(creep.memory.harvestSourceId);
-        if(remembered && remembered.room.name == creep.room.name && creepUtils.isSafeTarget(creep, remembered)) {
+        if(remembered &&
+            remembered.room.name == creep.room.name &&
+            creepUtils.isSafeTarget(creep, remembered) &&
+            creepUtils.canReachBeforeDecay(creep, remembered, 1)) {
             return remembered;
         }
     }
 
     var sources = creep.room.find(FIND_SOURCES, {
         filter: function(source) {
-            return creepUtils.isSafeTarget(creep, source);
+            return creepUtils.isSafeTarget(creep, source) &&
+                creepUtils.canReachBeforeDecay(creep, source, 1);
         }
     });
 
@@ -194,6 +206,12 @@ function isContainerOccupiedByOther(creep, container) {
 }
 
 function harvestToContainer(creep, source, container) {
+    if(!creepUtils.canReachBeforeDecay(creep, source, 1) ||
+        !creepUtils.canReachBeforeDecay(creep, container, 0)) {
+        debug.log('debugRoles', creep.name + ' skipped source container that will decay before arrival', 5);
+        return false;
+    }
+
     if(creep.store.getFreeCapacity(RESOURCE_ENERGY) === 0 &&
         container.store.getFreeCapacity(RESOURCE_ENERGY) === 0) {
         debug.log(
@@ -265,7 +283,9 @@ function runContainerHarvesting(creep) {
     }
 
     var container = getSourceContainer(source);
-    if(!container || !creepUtils.isSafeTarget(creep, container)) {
+    if(!container ||
+        !creepUtils.isSafeTarget(creep, container) ||
+        !creepUtils.canReachBeforeDecay(creep, container, 0)) {
         delete creep.memory.containerSourceId;
         return false;
     }

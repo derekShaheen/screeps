@@ -35,7 +35,8 @@ function findConstructionTarget(creep, sites) {
     }
 
     sites = sites.filter(function(site) {
-        return creepUtils.isSafeTarget(creep, site);
+        return creepUtils.isSafeTarget(creep, site) &&
+            creepUtils.canReachBeforeDecay(creep, site, 3);
     });
     if(!sites.length) {
         debug.log('debugDefense', creep.name + ' found no safe construction sites', 5);
@@ -71,7 +72,8 @@ function findCriticalRepairTarget(creep) {
             }
 
             return structure.hits < structure.hitsMax * 0.25 &&
-                creepUtils.isSafeTarget(creep, structure);
+                creepUtils.isSafeTarget(creep, structure) &&
+                creepUtils.canReachBeforeDecay(creep, structure, 3);
         }
     });
 
@@ -94,7 +96,8 @@ function findWallRepairTarget(creep) {
             return (structure.structureType == STRUCTURE_WALL ||
                 structure.structureType == STRUCTURE_RAMPART) &&
                 structure.hits < targetHits &&
-                creepUtils.isSafeTarget(creep, structure);
+                creepUtils.isSafeTarget(creep, structure) &&
+                creepUtils.canReachBeforeDecay(creep, structure, 3);
         }
     });
 
@@ -114,6 +117,10 @@ function findMaintenanceRepairTarget(creep) {
     var damaged = room.find(FIND_STRUCTURES, {
         filter: function(structure) {
             if(!creepUtils.isSafeTarget(creep, structure)) {
+                return false;
+            }
+
+            if(!creepUtils.canReachBeforeDecay(creep, structure, 3)) {
                 return false;
             }
 
@@ -151,6 +158,11 @@ function findRepairTarget(creep) {
 }
 
 function build(creep, target) {
+    if(!creepUtils.canReachBeforeDecay(creep, target, 3)) {
+        debug.log('debugRoles', creep.name + ' skipped construction target that will decay before arrival', 5);
+        return false;
+    }
+
     var result = creep.build(target);
     if(result == ERR_NOT_IN_RANGE) {
         debug.log(
@@ -177,6 +189,11 @@ function build(creep, target) {
 }
 
 function repair(creep, target) {
+    if(!creepUtils.canReachBeforeDecay(creep, target, 3)) {
+        debug.log('debugRoles', creep.name + ' skipped repair target that will decay before arrival', 5);
+        return false;
+    }
+
     var result = creep.repair(target);
     if(result == ERR_NOT_IN_RANGE) {
         creepUtils.moveTo(creep, target, '#ffffff', 'go repair', 'move:repair');
