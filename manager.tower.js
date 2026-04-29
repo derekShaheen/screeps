@@ -1,5 +1,9 @@
 var debug = require('utils.debug');
 
+function formatPos(pos) {
+    return pos.roomName + ':' + pos.x + ',' + pos.y;
+}
+
 function findRepairTarget(room) {
     var wallTargetHits = room.memory.wallTargetHits || 1000;
     var critical = room.find(FIND_STRUCTURES, {
