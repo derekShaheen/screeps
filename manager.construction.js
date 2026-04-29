@@ -810,20 +810,72 @@ function getInteriorExitCoordinate(value) {
     return value;
 }
 
-function getInteriorExitPos(room, pos) {
-    if(pos.x === 0) {
-        return new RoomPosition(2, getInteriorExitCoordinate(pos.y), room.name);
+function getExitSealPos(room, side, coordinate) {
+    var interiorCoordinate = getInteriorExitCoordinate(coordinate);
+
+    if(side == 'W') {
+        return new RoomPosition(2, interiorCoordinate, room.name);
     }
 
-    if(pos.x === 49) {
-        return new RoomPosition(47, getInteriorExitCoordinate(pos.y), room.name);
+    if(side == 'E') {
+        return new RoomPosition(47, interiorCoordinate, room.name);
     }
 
-    if(pos.y === 0) {
-        return new RoomPosition(getInteriorExitCoordinate(pos.x), 2, room.name);
+    if(side == 'N') {
+        return new RoomPosition(interiorCoordinate, 2, room.name);
     }
 
-    return new RoomPosition(getInteriorExitCoordinate(pos.x), 47, room.name);
+    return new RoomPosition(interiorCoordinate, 47, room.name);
+}
+
+function hasExitSeal(pos) {
+    var structures = pos.lookFor(LOOK_STRUCTURES);
+    for(var i = 0; i < structures.length; i++) {
+        if(structures[i].structureType == STRUCTURE_WALL ||
+            structures[i].structureType == STRUCTURE_RAMPART) {
+            return true;
+        }
+    }
+
+    var sites = pos.lookFor(LOOK_CONSTRUCTION_SITES);
+    for(var j = 0; j < sites.length; j++) {
+        if(sites[j].structureType == STRUCTURE_WALL ||
+            sites[j].structureType == STRUCTURE_RAMPART) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function isNaturallySealed(room, pos) {
+    return getTerrain(room, pos.x, pos.y) == TERRAIN_MASK_WALL;
+}
+
+function getExitSealPlan(room, segment) {
+    var side = getExitSide(segment[0]);
+    var start = getExitCoordinate(segment[0]);
+    var end = getExitCoordinate(segment[segment.length - 1]);
+    var margin = 2;
+    var minCoordinate = getInteriorExitCoordinate(start - margin);
+    var maxCoordinate = getInteriorExitCoordinate(end + margin);
+    var gateCoordinate = getInteriorExitCoordinate(Math.floor((start + end) / 2));
+    var positions = [];
+
+    for(var coordinate = minCoordinate; coordinate <= maxCoordinate; coordinate++) {
+        positions.push({
+            pos: getExitSealPos(room, side, coordinate),
+            structureType: coordinate == gateCoordinate ? STRUCTURE_RAMPART : STRUCTURE_WALL
+        });
+    }
+
+    return {
+        side: side,
+        start: minCoordinate,
+        end: maxCoordinate,
+        gate: gateCoordinate,
+        positions: positions
+    };
 }
 
 function groupExitSegments(room) {
@@ -867,43 +919,99 @@ function groupExitSegments(room) {
 }
 
 function planExitSegment(room, segment, remaining) {
-    var placed = 0;
-    var gateIndex = Math.floor(segment.length / 2);
+    var status = {
+        placed: 0,
+        blocked: 0,
+        missing: 0,
+        planned: getExitSealPlan(room, segment)
+    };
 
-    for(var i = 0; i < segment.length && placed < remaining; i++) {
-        var pos = getInteriorExitPos(room, segment[i]);
-        var structureType = i == gateIndex ? STRUCTURE_RAMPART : STRUCTURE_WALL;
-        var result = createSite(room, pos, structureType);
+    for(var i = 0; i < status.planned.positions.length; i++) {
+        var plannedPosition = status.planned.positions[i];
+        var pos = plannedPosition.pos;
+
+        if(hasExitSeal(pos) || isNaturallySealed(room, pos)) {
+            continue;
+        }
+
+        if(status.placed >= remaining) {
+            status.missing++;
+            continue;
+        }
+
+        var result = createSite(room, pos, plannedPosition.structureType);
 
         if(result == OK) {
-            placed++;
+            status.placed++;
+            continue;
         }
 
         if(result == ERR_FULL) {
+            status.missing++;
             break;
         }
+
+        status.blocked++;
+        status.missing++;
     }
 
-    return placed;
+    if(status.placed > 0) {
+        debug.log(
+            'debugConstruction',
+            room.name + ' exit ' + status.planned.side + ' seal planned ' +
+                status.placed + ' site(s), gate ' + status.planned.gate +
+                ', span ' + status.planned.start + '-' + status.planned.end,
+            1
+        );
+    }
+
+    if(status.blocked > 0) {
+        debug.log(
+            'debugConstruction',
+            room.name + ' exit ' + status.planned.side + ' seal has ' +
+                status.blocked + ' blocked tile(s), gate ' + status.planned.gate +
+                ', span ' + status.planned.start + '-' + status.planned.end,
+            10
+        );
+    }
+
+    return status;
 }
 
 function planExitWalls(room, remaining) {
     var placed = 0;
+    var missing = 0;
+    var blocked = 0;
     var segments = groupExitSegments(room);
     segments.sort(function(a, b) {
         return a.length - b.length;
     });
 
-    for(var i = 0; i < segments.length && placed < remaining; i++) {
-        placed += planExitSegment(room, segments[i], remaining - placed);
+    for(var i = 0; i < segments.length; i++) {
+        var status = planExitSegment(room, segments[i], remaining - placed);
+        placed += status.placed;
+        missing += status.missing;
+        blocked += status.blocked;
     }
 
     if(segments.length) {
-        debug.log(
-            'debugConstruction',
-            room.name + ' exit wall planner scanned ' + segments.length + ' exit segments',
-            20
-        );
+        room.memory.exitWallsSealed = missing === 0;
+
+        if(room.memory.exitWallsSealed) {
+            debug.log(
+                'debugConstruction',
+                room.name + ' exit wall planner verified ' + segments.length + ' sealed exit segments',
+                50
+            );
+        }
+        else {
+            debug.log(
+                'debugConstruction',
+                room.name + ' exit wall planner scanned ' + segments.length +
+                    ' exit segments, missing ' + missing + ', blocked ' + blocked,
+                10
+            );
+        }
     }
 
     return placed;
@@ -946,7 +1054,8 @@ function planDefense(room, settings, totalBudget) {
     if(placed > 0) {
         debug.log('debugConstruction', room.name + ' placed ' + placed + ' defense construction sites', 1);
     }
-    else if(settings.autoRamparts !== false || settings.autoExitWalls !== false) {
+    else if((settings.autoRamparts !== false || settings.autoExitWalls !== false) &&
+        room.memory.exitWallsSealed !== true) {
         debug.log(
             'debugConstruction',
             room.name + ' defense planner found no valid defense placements',
