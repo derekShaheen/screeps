@@ -154,8 +154,14 @@ function createSite(room, pos, structureType) {
             room.name + ' planned ' + structureType + ' at ' + formatPos(pos),
             1
         );
+        return result;
     }
 
+    debug.log(
+        'debugConstruction',
+        room.name + ' failed to plan ' + structureType + ' at ' + formatPos(pos) + ': ' + result,
+        10
+    );
     return result;
 }
 
@@ -533,6 +539,64 @@ function planKeyRamparts(room, remaining) {
     return placed;
 }
 
+function planCorePerimeterDefense(room, remaining) {
+    var placed = 0;
+    var spawn = getPrimarySpawn(room);
+    if(!spawn) {
+        return placed;
+    }
+
+    var candidates = [];
+    for(var range = 1; range <= 2; range++) {
+        for(var dx = -range; dx <= range; dx++) {
+            for(var dy = -range; dy <= range; dy++) {
+                if(Math.max(Math.abs(dx), Math.abs(dy)) != range) {
+                    continue;
+                }
+
+                var x = spawn.pos.x + dx;
+                var y = spawn.pos.y + dy;
+                if(x <= 1 || x >= 48 || y <= 1 || y >= 48) {
+                    continue;
+                }
+
+                var pos = new RoomPosition(x, y, room.name);
+                if(isCoreBuildTile(room, pos)) {
+                    candidates.push(pos);
+                }
+            }
+        }
+    }
+
+    candidates.sort(function(a, b) {
+        var controller = room.controller;
+        var aScore = controller ? a.getRangeTo(controller) : 0;
+        var bScore = controller ? b.getRangeTo(controller) : 0;
+        return aScore - bScore;
+    });
+
+    for(var i = 0; i < candidates.length && placed < remaining; i++) {
+        var result = createSite(room, candidates[i], STRUCTURE_RAMPART);
+        if(result == OK) {
+            placed++;
+        }
+
+        if(result == ERR_FULL) {
+            break;
+        }
+    }
+
+    if(placed > 0) {
+        debug.log(
+            'debugConstruction',
+            room.name + ' planned ' + placed + ' fallback core defense site(s)',
+            1
+        );
+    }
+
+    return placed;
+}
+
 function getExitSide(pos) {
     if(pos.x === 0) {
         return 'W';
@@ -685,6 +749,10 @@ function planDefense(room, settings, totalBudget) {
 
     if(settings.autoExitWalls !== false && placed < remaining) {
         placed += planExitWalls(room, remaining - placed);
+    }
+
+    if(placed === 0 && placed < remaining) {
+        placed += planCorePerimeterDefense(room, remaining - placed);
     }
 
     if(placed > 0) {
