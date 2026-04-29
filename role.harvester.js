@@ -1,6 +1,8 @@
 var creepUtils = require('utils.creep');
 var debug = require('utils.debug');
 
+var TOWER_PEACE_REFILL_TARGET = 600;
+
 function formatPos(pos) {
     return pos.roomName + ':' + pos.x + ',' + pos.y;
 }
@@ -28,22 +30,44 @@ function findSpawnOrExtensionTarget(creep) {
     });
 }
 
+function isActiveTower(structure) {
+    return !structure.isActive || structure.isActive();
+}
+
+function findTowerFillTarget(creep, targetEnergy) {
+    return creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
+        filter: function(structure) {
+            if(structure.structureType != STRUCTURE_TOWER || !isActiveTower(structure)) {
+                return false;
+            }
+
+            var desiredEnergy = targetEnergy === undefined ?
+                structure.store.getCapacity(RESOURCE_ENERGY) :
+                Math.min(targetEnergy, structure.store.getCapacity(RESOURCE_ENERGY));
+
+            return structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0 &&
+                structure.store[RESOURCE_ENERGY] < desiredEnergy &&
+                creepUtils.isSafeTarget(creep, structure) &&
+                creepUtils.canReachBeforeDecay(creep, structure, 1);
+        }
+    });
+}
+
 function findFillTarget(creep) {
+    if(creep.room.memory.defenseMode) {
+        var defenseTower = findTowerFillTarget(creep);
+        if(defenseTower) {
+            return defenseTower;
+        }
+    }
+
     var spawnOrExtension = findSpawnOrExtensionTarget(creep);
 
     if(spawnOrExtension) {
         return spawnOrExtension;
     }
 
-    var tower = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
-        filter: function(structure) {
-            return structure.structureType == STRUCTURE_TOWER &&
-                structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0 &&
-                creepUtils.isSafeTarget(creep, structure) &&
-                creepUtils.canReachBeforeDecay(creep, structure, 1);
-        }
-    });
-
+    var tower = findTowerFillTarget(creep, TOWER_PEACE_REFILL_TARGET);
     if(tower) {
         return tower;
     }

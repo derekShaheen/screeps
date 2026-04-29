@@ -12,6 +12,10 @@ function getTowerAttackEnergyCost() {
     return 10;
 }
 
+function isActiveTower(tower) {
+    return !tower.isActive || tower.isActive();
+}
+
 function findRepairTarget(room) {
     var wallTargetHits = room.memory.wallTargetHits || 1000;
     var critical = room.find(FIND_STRUCTURES, {
@@ -222,10 +226,30 @@ var towerManager = {
             return;
         }
 
-        var attackTarget = findTowerAttackTarget(room, towers, hostiles);
+        var activeTowers = [];
+        for(var towerIndex = 0; towerIndex < towers.length; towerIndex++) {
+            if(isActiveTower(towers[towerIndex])) {
+                activeTowers.push(towers[towerIndex]);
+                continue;
+            }
 
-        for(var i = 0; i < towers.length; i++) {
-            var tower = towers[i];
+            debug.log(
+                'debugDefense',
+                towers[towerIndex].id + ' tower inactive at RCL ' +
+                    (room.controller ? room.controller.level : 'none') +
+                    ' energy ' + towers[towerIndex].store[RESOURCE_ENERGY],
+                5
+            );
+        }
+
+        if(!activeTowers.length) {
+            return;
+        }
+
+        var attackTarget = findTowerAttackTarget(room, activeTowers, hostiles);
+
+        for(var i = 0; i < activeTowers.length; i++) {
+            var tower = activeTowers[i];
 
             if(attackTarget) {
                 var attackResult = tower.attack(attackTarget);
@@ -254,7 +278,8 @@ var towerManager = {
                     'debugDefense',
                     tower.id + ' attack failed: ' + attackResult +
                         ' target ' + attackTarget.owner.username +
-                        ' at ' + formatPos(attackTarget.pos),
+                        ' at ' + formatPos(attackTarget.pos) +
+                        (attackResult == ERR_RCL_NOT_ENOUGH ? ' tower inactive for current RCL' : ''),
                     3
                 );
                 continue;
