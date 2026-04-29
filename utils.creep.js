@@ -71,10 +71,26 @@ function pickupTarget(creep, target) {
     return result == OK;
 }
 
+function rememberHarvestPosition(creep, source) {
+    creep.memory.lastHarvestPosition = {
+        x: creep.pos.x,
+        y: creep.pos.y,
+        roomName: creep.pos.roomName,
+        sourceX: source.pos.x,
+        sourceY: source.pos.y,
+        sourceRoomName: source.pos.roomName
+    };
+}
+
 function harvestTarget(creep, target) {
     var result = creep.harvest(target);
     if(result == ERR_NOT_IN_RANGE) {
         moveTo(creep, target, '#ffaa00');
+        return true;
+    }
+
+    if(result == OK) {
+        rememberHarvestPosition(creep, target);
         return true;
     }
 

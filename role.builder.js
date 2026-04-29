@@ -168,6 +168,107 @@ function repair(creep, target) {
     return result == OK;
 }
 
+function isSamePos(pos, memoryPos) {
+    return memoryPos &&
+        pos.x == memoryPos.x &&
+        pos.y == memoryPos.y &&
+        pos.roomName == memoryPos.roomName;
+}
+
+function isWalkable(creep, pos) {
+    if(pos.x <= 0 || pos.x >= 49 || pos.y <= 0 || pos.y >= 49) {
+        return false;
+    }
+
+    if(creep.room.getTerrain().get(pos.x, pos.y) == TERRAIN_MASK_WALL) {
+        return false;
+    }
+
+    if(pos.lookFor(LOOK_CREEPS).length > 0) {
+        return false;
+    }
+
+    var structures = pos.lookFor(LOOK_STRUCTURES);
+    for(var i = 0; i < structures.length; i++) {
+        var type = structures[i].structureType;
+        if(type != STRUCTURE_ROAD &&
+            type != STRUCTURE_CONTAINER &&
+            type != STRUCTURE_RAMPART) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function getSourceRange(pos, harvestPos) {
+    if(!harvestPos.sourceRoomName) {
+        return 0;
+    }
+
+    var sourcePos = new RoomPosition(harvestPos.sourceX, harvestPos.sourceY, harvestPos.sourceRoomName);
+    return pos.getRangeTo(sourcePos);
+}
+
+function findStepOffPosition(creep, harvestPos) {
+    var candidates = [];
+    for(var dx = -1; dx <= 1; dx++) {
+        for(var dy = -1; dy <= 1; dy++) {
+            if(dx === 0 && dy === 0) {
+                continue;
+            }
+
+            var x = creep.pos.x + dx;
+            var y = creep.pos.y + dy;
+            if(x <= 0 || x >= 49 || y <= 0 || y >= 49) {
+                continue;
+            }
+
+            var pos = new RoomPosition(x, y, creep.room.name);
+            if(isWalkable(creep, pos)) {
+                candidates.push(pos);
+            }
+        }
+    }
+
+    candidates.sort(function(a, b) {
+        var sourceRangeDiff = getSourceRange(b, harvestPos) - getSourceRange(a, harvestPos);
+        if(sourceRangeDiff !== 0) {
+            return sourceRangeDiff;
+        }
+
+        var controller = creep.room.controller;
+        if(controller) {
+            return a.getRangeTo(controller) - b.getRangeTo(controller);
+        }
+
+        return 0;
+    });
+
+    return candidates[0] || null;
+}
+
+function moveOffHarvestPosition(creep) {
+    var harvestPos = creep.memory.lastHarvestPosition;
+    if(!isSamePos(creep.pos, harvestPos)) {
+        return false;
+    }
+
+    var stepOffPos = findStepOffPosition(creep, harvestPos);
+    if(!stepOffPos) {
+        debug.log('debugRoles', creep.name + ' cannot find a tile to clear harvest position ' + formatPos(creep.pos), 5);
+        return false;
+    }
+
+    debug.log(
+        'debugRoles',
+        creep.name + ' clearing harvest tile ' + formatPos(creep.pos) + ' -> ' + formatPos(stepOffPos),
+        1
+    );
+    creepUtils.moveTo(creep, stepOffPos, '#66ff66');
+    return true;
+}
+
 var roleBuilder = {
     run: function(creep) {
         creepUtils.updateWorkingState(creep, 'build', 'energy');
@@ -186,6 +287,10 @@ var roleBuilder = {
         if(!creep.memory.working) {
             debug.log('debugRoles', creep.name + ' gathering energy before building', 10);
             creepUtils.collectEnergy(creep);
+            return;
+        }
+
+        if(moveOffHarvestPosition(creep)) {
             return;
         }
 
