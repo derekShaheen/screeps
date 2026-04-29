@@ -52,6 +52,26 @@ var BODIES = {
 };
 
 var MIN_DEFENDER_HEALER_BODY = [TOUGH, HEAL, MOVE];
+var MAX_CREEP_PARTS = 50;
+
+var BODY_GROWTH = {
+    harvester: [WORK, CARRY, MOVE],
+    transporter: [CARRY, CARRY, MOVE],
+    upgrader: [WORK, WORK, CARRY, MOVE],
+    builder: [WORK, CARRY, CARRY, MOVE],
+    defender: [TOUGH, ATTACK, MOVE],
+    defenderHealer: [TOUGH, HEAL, MOVE]
+};
+
+var BODY_ORDER = {};
+BODY_ORDER[TOUGH] = 1;
+BODY_ORDER[WORK] = 2;
+BODY_ORDER[CARRY] = 3;
+BODY_ORDER[ATTACK] = 4;
+BODY_ORDER[RANGED_ATTACK] = 5;
+BODY_ORDER[HEAL] = 6;
+BODY_ORDER[CLAIM] = 7;
+BODY_ORDER[MOVE] = 8;
 
 function bodyCost(body) {
     var cost = 0;
@@ -62,15 +82,67 @@ function bodyCost(body) {
     return cost;
 }
 
-function chooseBody(room, role, bodyType) {
-    var options = BODIES[bodyType || role] || BODIES[role] || BODIES.harvester;
+function sortBody(body) {
+    body.sort(function(a, b) {
+        return (BODY_ORDER[a] || 99) - (BODY_ORDER[b] || 99);
+    });
+
+    return body;
+}
+
+function cloneBody(body) {
+    var copy = [];
+    for(var i = 0; i < body.length; i++) {
+        copy.push(body[i]);
+    }
+
+    return copy;
+}
+
+function getBestConfiguredBody(options, energyAvailable) {
     for(var i = options.length - 1; i >= 0; i--) {
-        if(bodyCost(options[i]) <= room.energyAvailable) {
+        if(bodyCost(options[i]) <= energyAvailable) {
             return options[i];
         }
     }
 
     return null;
+}
+
+function growBody(baseBody, growthParts, energyAvailable) {
+    var body = cloneBody(baseBody);
+    var currentCost = bodyCost(body);
+    var growthCost = bodyCost(growthParts);
+
+    if(!growthParts || !growthParts.length || growthCost <= 0) {
+        return sortBody(body);
+    }
+
+    while(body.length + growthParts.length <= MAX_CREEP_PARTS &&
+        currentCost + growthCost <= energyAvailable) {
+        for(var i = 0; i < growthParts.length; i++) {
+            body.push(growthParts[i]);
+        }
+        currentCost += growthCost;
+    }
+
+    return sortBody(body);
+}
+
+function chooseBody(room, role, bodyType) {
+    var selectedType = bodyType || role;
+    var options = BODIES[selectedType] || BODIES[role] || BODIES.harvester;
+    var configuredBody = getBestConfiguredBody(options, room.energyAvailable);
+    if(!configuredBody) {
+        return null;
+    }
+
+    var topConfiguredBody = options[options.length - 1];
+    if(bodyCost(topConfiguredBody) > room.energyAvailable) {
+        return configuredBody;
+    }
+
+    return growBody(configuredBody, BODY_GROWTH[selectedType] || BODY_GROWTH[role], room.energyAvailable);
 }
 
 function getDefenderType(creep) {
