@@ -1,6 +1,22 @@
 var debug = require('utils.debug');
 
-function moveTo(creep, target, stroke) {
+function announceIntent(creep, key, message) {
+    if(!key || !message) {
+        return;
+    }
+
+    if(creep.memory.intentKey == key) {
+        return;
+    }
+
+    creep.memory.intentKey = key;
+    creep.memory.intentTick = Game.time;
+    creep.say(message);
+}
+
+function moveTo(creep, target, stroke, intentMessage, intentKey) {
+    announceIntent(creep, intentKey || ('move:' + intentMessage), intentMessage);
+
     var options = {
         reusePath: 5
     };
@@ -25,7 +41,7 @@ function setWorking(creep, working, label) {
         }
         debug.roleState(creep, working ? 'working' : 'gathering');
         if(label) {
-            creep.say(label);
+            announceIntent(creep, 'state:' + label, label);
         }
     }
 }
@@ -301,7 +317,12 @@ function withdrawFromTarget(creep, target) {
     releaseEnergyQueue(creep);
     var result = creep.withdraw(target, RESOURCE_ENERGY);
     if(result == ERR_NOT_IN_RANGE) {
-        moveTo(creep, target, '#ffaa00');
+        moveTo(creep, target, '#ffaa00', 'go energy', 'move:energy');
+        return true;
+    }
+
+    if(result == OK) {
+        announceIntent(creep, 'action:withdraw', 'withdraw');
         return true;
     }
 
@@ -312,7 +333,12 @@ function pickupTarget(creep, target) {
     releaseEnergyQueue(creep);
     var result = creep.pickup(target);
     if(result == ERR_NOT_IN_RANGE) {
-        moveTo(creep, target, '#ffaa00');
+        moveTo(creep, target, '#ffaa00', 'go pickup', 'move:pickup');
+        return true;
+    }
+
+    if(result == OK) {
+        announceIntent(creep, 'action:pickup', 'pickup');
         return true;
     }
 
@@ -333,12 +359,13 @@ function rememberHarvestPosition(creep, source) {
 function harvestTarget(creep, target) {
     var result = creep.harvest(target);
     if(result == ERR_NOT_IN_RANGE) {
-        moveTo(creep, target, '#ffaa00');
+        moveTo(creep, target, '#ffaa00', 'go harvest', 'move:harvest');
         return true;
     }
 
     if(result == OK) {
         rememberHarvestPosition(creep, target);
+        announceIntent(creep, 'action:harvest', 'harvest');
         return true;
     }
 
@@ -365,7 +392,13 @@ function harvestQueuedSource(creep) {
                 ' at ' + destination.roomName + ':' + destination.x + ',' + destination.y,
             5
         );
-        moveTo(creep, destination, canHarvestFromQueueSlot ? '#ffaa00' : '#66ccff');
+        moveTo(
+            creep,
+            destination,
+            canHarvestFromQueueSlot ? '#ffaa00' : '#66ccff',
+            canHarvestFromQueueSlot ? 'go harvest' : 'queue',
+            canHarvestFromQueueSlot ? 'move:harvest' : 'move:queue'
+        );
         return true;
     }
 
@@ -380,6 +413,7 @@ function harvestQueuedSource(creep) {
             ' energy=' + source.energy,
         5
     );
+    announceIntent(creep, 'action:waitEnergy', 'wait');
     return true;
 }
 
@@ -455,7 +489,12 @@ function collectEnergy(creep, options) {
 function transferEnergy(creep, target) {
     var result = creep.transfer(target, RESOURCE_ENERGY);
     if(result == ERR_NOT_IN_RANGE) {
-        moveTo(creep, target, '#ffffff');
+        moveTo(creep, target, '#ffffff', 'go fill', 'move:fill');
+        return true;
+    }
+
+    if(result == OK) {
+        announceIntent(creep, 'action:transfer', 'fill');
         return true;
     }
 
@@ -469,7 +508,12 @@ function upgrade(creep) {
 
     var result = creep.upgradeController(creep.room.controller);
     if(result == ERR_NOT_IN_RANGE) {
-        moveTo(creep, creep.room.controller, '#ffffff');
+        moveTo(creep, creep.room.controller, '#ffffff', 'go upgrade', 'move:upgrade');
+        return true;
+    }
+
+    if(result == OK) {
+        announceIntent(creep, 'action:upgrade', 'upgrade');
         return true;
     }
 
@@ -477,6 +521,7 @@ function upgrade(creep) {
 }
 
 module.exports = {
+    announceIntent: announceIntent,
     collectEnergy: collectEnergy,
     moveTo: moveTo,
     releaseEnergyQueue: releaseEnergyQueue,

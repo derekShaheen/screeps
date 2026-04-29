@@ -141,11 +141,12 @@ function build(creep, target) {
             creep.name + ' moving to build ' + target.structureType + ' at ' + formatPos(target.pos),
             5
         );
-        creepUtils.moveTo(creep, target, '#ffffff');
+        creepUtils.moveTo(creep, target, '#ffffff', 'go build', 'move:build');
         return true;
     }
 
     if(result == OK) {
+        creepUtils.announceIntent(creep, 'action:build', 'build');
         debug.log(
             'debugRoles',
             creep.name + ' building ' + target.structureType + ' at ' + formatPos(target.pos),
@@ -161,7 +162,12 @@ function build(creep, target) {
 function repair(creep, target) {
     var result = creep.repair(target);
     if(result == ERR_NOT_IN_RANGE) {
-        creepUtils.moveTo(creep, target, '#ffffff');
+        creepUtils.moveTo(creep, target, '#ffffff', 'go repair', 'move:repair');
+        return true;
+    }
+
+    if(result == OK) {
+        creepUtils.announceIntent(creep, 'action:repair', 'repair');
         return true;
     }
 
@@ -265,7 +271,7 @@ function moveOffHarvestPosition(creep) {
         creep.name + ' clearing harvest tile ' + formatPos(creep.pos) + ' -> ' + formatPos(stepOffPos),
         1
     );
-    creepUtils.moveTo(creep, stepOffPos, '#66ff66');
+    creepUtils.moveTo(creep, stepOffPos, '#66ff66', 'clear src', 'move:clearHarvest');
     return true;
 }
 
