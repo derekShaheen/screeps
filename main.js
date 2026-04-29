@@ -1,44 +1,103 @@
+var debug = require('utils.debug');
+var spawnManager = require('manager.spawn');
+var towerManager = require('manager.tower');
+var uiManager = require('manager.ui');
 var roleHarvester = require('role.harvester');
+var roleBuilder = require('role.builder');
 var roleUpgrader = require('role.upgrader');
 
-module.exports.loop = function () {
+var DEFAULT_ROOM_MEMORY = {
+    creepTargets: {
+        harvester: 2,
+        upgrader: 1,
+        builder: 1
+    },
+    wallTargetHits: 1000,
+    defenseMode: false
+};
+
+function cleanupCreepMemory() {
+    if(!Memory.creeps) {
+        Memory.creeps = {};
+    }
 
     for(var name in Memory.creeps) {
         if(!Game.creeps[name]) {
             delete Memory.creeps[name];
-            console.log('Clearing non-existing creep memory:', name);
-        }
-    }
-
-    var harvesters = _.filter(Game.creeps, (creep) => creep.memory.role == 'harvester');
-    console.log('Harvesters: ' + harvesters.length);
-
-    if(harvesters.length < 2) {
-        var newName = 'Harvester' + Game.time;
-        console.log('Spawning new harvester: ' + newName);
-        Game.spawns['Spawn1'].spawnCreep([WORK,CARRY,MOVE], newName,
-            {memory: {role: 'harvester'}});
-    }
-
-    if(Game.spawns['Spawn1'].spawning) {
-        var spawningCreep = Game.creeps[Game.spawns['Spawn1'].spawning.name];
-        Game.spawns['Spawn1'].room.visual.text(
-            '🛠️' + spawningCreep.memory.role,
-            Game.spawns['Spawn1'].pos.x + 1,
-            Game.spawns['Spawn1'].pos.y,
-            {align: 'left', opacity: 0.8});
-    }
-
-    for(var name in Game.creeps) {
-        var creep = Game.creeps[name];
-        if(creep.memory.role == 'harvester') {
-            roleHarvester.run(creep);
-        }
-        if(creep.memory.role == 'upgrader') {
-            roleUpgrader.run(creep);
-        }
-        if(creep.memory.role == 'builder') {
-            roleBuilder.run(creep);
+            debug.log('debugRoles', 'Cleared memory for dead creep ' + name, 1);
         }
     }
 }
+
+function initializeRoomMemory(room) {
+    if(!Memory.rooms) {
+        Memory.rooms = {};
+    }
+
+    if(!Memory.rooms[room.name]) {
+        Memory.rooms[room.name] = {};
+    }
+
+    var memory = Memory.rooms[room.name];
+    if(!memory.creepTargets) {
+        memory.creepTargets = {};
+    }
+
+    for(var role in DEFAULT_ROOM_MEMORY.creepTargets) {
+        if(memory.creepTargets[role] === undefined) {
+            memory.creepTargets[role] = DEFAULT_ROOM_MEMORY.creepTargets[role];
+        }
+    }
+
+    if(memory.wallTargetHits === undefined) {
+        memory.wallTargetHits = DEFAULT_ROOM_MEMORY.wallTargetHits;
+    }
+
+    if(memory.defenseMode === undefined) {
+        memory.defenseMode = DEFAULT_ROOM_MEMORY.defenseMode;
+    }
+}
+
+function runCreep(creep) {
+    if(creep.memory.role == 'harvester') {
+        roleHarvester.run(creep);
+        return;
+    }
+
+    if(creep.memory.role == 'builder') {
+        roleBuilder.run(creep);
+        return;
+    }
+
+    if(creep.memory.role == 'upgrader') {
+        roleUpgrader.run(creep);
+        return;
+    }
+
+    debug.log('debugRoles', creep.name + ' has unknown role ' + creep.memory.role, 5);
+}
+
+module.exports.loop = function () {
+    debug.initialize();
+    cleanupCreepMemory();
+
+    for(var roomName in Game.rooms) {
+        initializeRoomMemory(Game.rooms[roomName]);
+    }
+
+    for(var towerRoomName in Game.rooms) {
+        towerManager.run(Game.rooms[towerRoomName]);
+    }
+
+    for(var spawnName in Game.spawns) {
+        spawnManager.run(Game.spawns[spawnName]);
+    }
+
+    for(var creepName in Game.creeps) {
+        runCreep(Game.creeps[creepName]);
+    }
+
+    for(var uiRoomName in Game.rooms) {
+        uiManager.run(Game.rooms[uiRoomName]);
+    }
+};
