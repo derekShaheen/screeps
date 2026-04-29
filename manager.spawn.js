@@ -23,8 +23,8 @@ var BODIES = {
         [WORK, CARRY, CARRY, MOVE, MOVE]
     ],
     defender: [
-        [ATTACK, MOVE],
-        [TOUGH, ATTACK, MOVE, MOVE],
+        [ATTACK, ATTACK, MOVE],
+        [TOUGH, ATTACK, ATTACK, MOVE],
         [TOUGH, ATTACK, ATTACK, MOVE, MOVE]
     ]
 };
