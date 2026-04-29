@@ -112,6 +112,66 @@ function findWallRepairTarget(creep) {
     return walls[0];
 }
 
+function hasWallRepairBacklog(room) {
+    var targetHits = room.memory.wallTargetHits || 1000;
+    var walls = room.find(FIND_STRUCTURES, {
+        filter: function(structure) {
+            return (structure.structureType == STRUCTURE_WALL ||
+                structure.structureType == STRUCTURE_RAMPART) &&
+                structure.hits < targetHits;
+        }
+    });
+
+    return walls.length > 0;
+}
+
+function hasHostileThreats(room) {
+    var hostiles = room.find(FIND_HOSTILE_CREEPS, {
+        filter: function(creep) {
+            return creep.getActiveBodyparts(ATTACK) > 0 ||
+                creep.getActiveBodyparts(RANGED_ATTACK) > 0 ||
+                creep.getActiveBodyparts(WORK) > 0 ||
+                creep.getActiveBodyparts(CLAIM) > 0;
+        }
+    });
+
+    return hostiles.length > 0;
+}
+
+function getActiveBuilderNames(room) {
+    var names = [];
+    for(var name in Game.creeps) {
+        var creep = Game.creeps[name];
+        if(creep.room.name == room.name &&
+            creep.memory.role == 'builder' &&
+            !creep.spawning) {
+            names.push(name);
+        }
+    }
+
+    names.sort();
+    return names;
+}
+
+function canRepairWalls(creep) {
+    if(creep.room.memory.defenseMode || hasHostileThreats(creep.room)) {
+        return true;
+    }
+
+    var builders = getActiveBuilderNames(creep.room);
+    if(builders.length <= 1) {
+        return true;
+    }
+
+    var configuredLimit = creep.room.memory.maxWallRepairBuilders;
+    var maxWallRepairers = typeof configuredLimit == 'number' ?
+        Math.max(0, Math.min(builders.length, configuredLimit)) :
+        1;
+
+    return builders.indexOf(creep.name) >= 0 &&
+        builders.indexOf(creep.name) < maxWallRepairers;
+}
+
 function findMaintenanceRepairTarget(creep) {
     var room = creep.room;
     var damaged = room.find(FIND_STRUCTURES, {
@@ -151,9 +211,9 @@ function findMaintenanceRepairTarget(creep) {
     return damaged[0];
 }
 
-function findRepairTarget(creep) {
+function findRepairTarget(creep, allowWallRepair) {
     return findCriticalRepairTarget(creep) ||
-        findWallRepairTarget(creep) ||
+        (allowWallRepair ? findWallRepairTarget(creep) : null) ||
         findMaintenanceRepairTarget(creep);
 }
 
@@ -340,11 +400,20 @@ var roleBuilder = {
             return;
         }
 
-        var repairTarget = findRepairTarget(creep);
+        var allowWallRepair = canRepairWalls(creep);
+        var repairTarget = findRepairTarget(creep, allowWallRepair);
         if(repairTarget) {
             debug.log('debugRoles', creep.name + ' repair target ' + repairTarget.structureType + ' in ' + creep.room.name, 10);
             repair(creep, repairTarget);
             return;
+        }
+
+        if(!allowWallRepair && hasWallRepairBacklog(creep.room)) {
+            debug.log(
+                'debugRoles',
+                creep.name + ' leaving wall repairs to assigned builder; upgrading to unlock expansion',
+                10
+            );
         }
 
         debug.log('debugRoles', creep.name + ' has no build or repair work; upgrading controller', 10);

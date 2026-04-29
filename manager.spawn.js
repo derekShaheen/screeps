@@ -257,6 +257,19 @@ function countDefenseRepairTargets(room) {
     return structures.length;
 }
 
+function countCriticalDefenseRepairTargets(room) {
+    var targetHits = Math.min(room.memory.wallTargetHits || 1000, room.memory.criticalWallHits || 1000);
+    var structures = room.find(FIND_STRUCTURES, {
+        filter: function(structure) {
+            return (structure.structureType == STRUCTURE_WALL ||
+                structure.structureType == STRUCTURE_RAMPART) &&
+                structure.hits < targetHits;
+        }
+    });
+
+    return structures.length;
+}
+
 function getHostileThreatCount(room) {
     var hostiles = room.find(FIND_HOSTILE_CREEPS, {
         filter: function(creep) {
@@ -333,6 +346,7 @@ function scaleTransporters(room, targets) {
 
 function scaleBuilders(room, targets, constructionSites) {
     var defenseRepairTargets = countDefenseRepairTargets(room);
+    var criticalDefenseRepairTargets = countCriticalDefenseRepairTargets(room);
 
     if(constructionSites >= 5) {
         targets.builder = Math.max(targets.builder, 2);
@@ -355,7 +369,7 @@ function scaleBuilders(room, targets, constructionSites) {
     }
 
     if(constructionSites === 0 &&
-        defenseRepairTargets >= 10 &&
+        criticalDefenseRepairTargets >= 10 &&
         hasStoredEnergy(room) &&
         room.energyCapacityAvailable >= 800) {
         targets.builder = Math.max(targets.builder, 3);
@@ -363,7 +377,9 @@ function scaleBuilders(room, targets, constructionSites) {
 }
 
 function scaleUpgraders(room, counts, targets, constructionSites) {
-    var defenseRepairBacklog = countDefenseRepairTargets(room) > 0;
+    var defenseRepairBacklog = room.memory.defenseMode ||
+        getHostileThreatCount(room) > 0 ||
+        countCriticalDefenseRepairTargets(room) > 0;
     var energyStable = room.energyCapacityAvailable >= 550 &&
         room.energyAvailable == room.energyCapacityAvailable &&
         constructionSites < 5 &&
