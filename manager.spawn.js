@@ -41,8 +41,17 @@ var BODIES = {
         [TOUGH, ATTACK, ATTACK, MOVE, MOVE],
         [TOUGH, ATTACK, ATTACK, ATTACK, MOVE, MOVE],
         [TOUGH, TOUGH, ATTACK, ATTACK, ATTACK, MOVE, MOVE]
+    ],
+    defenderHealer: [
+        [TOUGH, HEAL, MOVE],
+        [TOUGH, TOUGH, HEAL, MOVE, MOVE],
+        [TOUGH, TOUGH, HEAL, HEAL, MOVE, MOVE],
+        [TOUGH, TOUGH, TOUGH, HEAL, HEAL, MOVE, MOVE, MOVE],
+        [TOUGH, TOUGH, TOUGH, TOUGH, HEAL, HEAL, HEAL, MOVE, MOVE, MOVE]
     ]
 };
+
+var MIN_DEFENDER_HEALER_BODY = [TOUGH, HEAL, MOVE];
 
 function bodyCost(body) {
     var cost = 0;
@@ -53,8 +62,8 @@ function bodyCost(body) {
     return cost;
 }
 
-function chooseBody(room, role) {
-    var options = BODIES[role] || BODIES.harvester;
+function chooseBody(room, role, bodyType) {
+    var options = BODIES[bodyType || role] || BODIES[role] || BODIES.harvester;
     for(var i = options.length - 1; i >= 0; i--) {
         if(bodyCost(options[i]) <= room.energyAvailable) {
             return options[i];
@@ -64,13 +73,27 @@ function chooseBody(room, role) {
     return null;
 }
 
+function getDefenderType(creep) {
+    if(creep.memory.defenderType == 'healer' || creep.memory.defenderType == 'attacker') {
+        return creep.memory.defenderType;
+    }
+
+    if(creep.getActiveBodyparts && creep.getActiveBodyparts(HEAL) > 0) {
+        return 'healer';
+    }
+
+    return 'attacker';
+}
+
 function countRoles(room) {
     var counts = {
         harvester: 0,
         transporter: 0,
         upgrader: 0,
         builder: 0,
-        defender: 0
+        defender: 0,
+        defenderAttackers: 0,
+        defenderHealers: 0
     };
 
     for(var name in Game.creeps) {
@@ -81,6 +104,14 @@ function countRoles(room) {
 
         if(counts[creep.memory.role] !== undefined) {
             counts[creep.memory.role]++;
+            if(creep.memory.role == 'defender') {
+                if(getDefenderType(creep) == 'healer') {
+                    counts.defenderHealers++;
+                }
+                else {
+                    counts.defenderAttackers++;
+                }
+            }
         }
     }
 
@@ -227,17 +258,24 @@ function scaleUpgraders(room, counts, targets, constructionSites) {
 
 function scaleDefenders(room, targets) {
     var threatCount = getHostileThreatCount(room);
-    if(threatCount > 0 || room.memory.defenseMode) {
+    var canUseDefenderSquad = room.energyCapacityAvailable >= bodyCost(MIN_DEFENDER_HEALER_BODY);
+
+    if(canUseDefenderSquad && (threatCount > 0 || room.memory.defenseMode)) {
         targets.defender = Math.max(targets.defender, 2);
     }
 
-    if(threatCount >= 2) {
+    if(canUseDefenderSquad && threatCount >= 2) {
         targets.defender = Math.max(targets.defender, 3);
     }
 
-    if(room.controller && room.controller.level >= 4 && countStructures(room, STRUCTURE_TOWER) > 0) {
+    if(canUseDefenderSquad &&
+        room.controller &&
+        room.controller.level >= 4 &&
+        countStructures(room, STRUCTURE_TOWER) > 0) {
         targets.defender = Math.max(targets.defender, 2);
     }
+
+    room.memory.defenderSquadEnabled = canUseDefenderSquad && targets.defender >= 2;
 }
 
 function getTargets(room, counts) {
@@ -290,30 +328,66 @@ function makeCreepName(role) {
     return role + '_' + Game.time;
 }
 
+function getDefenderSpawnType(room, counts, targets) {
+    if(targets.defender < 2 ||
+        room.energyCapacityAvailable < bodyCost(MIN_DEFENDER_HEALER_BODY)) {
+        return 'attacker';
+    }
+
+    if(counts.defenderHealers < 1) {
+        return 'healer';
+    }
+
+    return 'attacker';
+}
+
+function getBodyType(role, defenderType) {
+    if(role == 'defender' && defenderType == 'healer') {
+        return 'defenderHealer';
+    }
+
+    return role;
+}
+
 function spawnRole(spawn, role, counts, targets) {
-    var body = chooseBody(spawn.room, role);
+    var defenderType = role == 'defender' ? getDefenderSpawnType(spawn.room, counts, targets) : null;
+    var body = chooseBody(spawn.room, role, getBodyType(role, defenderType));
     if(!body) {
-        debug.log('debugSpawn', spawn.name + ' waiting for energy to spawn ' + role, 5);
+        debug.log(
+            'debugSpawn',
+            spawn.name + ' waiting for energy to spawn ' +
+                (defenderType ? defenderType + ' ' : '') + role,
+            5
+        );
         return;
     }
 
     var name = makeCreepName(role);
+    var memory = {
+        role: role,
+        working: false
+    };
+    if(defenderType) {
+        memory.defenderType = defenderType;
+    }
+
     var result = spawn.spawnCreep(body, name, {
-        memory: {
-            role: role,
-            working: false
-        }
+        memory: memory
     });
 
     if(result == OK) {
         debug.log(
             'debugSpawn',
-            spawn.name + ' spawning ' + name + ' (' + body.join(',') + ') ' +
+            spawn.name + ' spawning ' + name +
+                (defenderType ? ' ' + defenderType : '') +
+                ' (' + body.join(',') + ') ' +
                 'counts H ' + counts.harvester + '/' + targets.harvester +
                 ' T ' + counts.transporter + '/' + targets.transporter +
                 ' B ' + counts.builder + '/' + targets.builder +
                 ' U ' + counts.upgrader + '/' + targets.upgrader +
-                ' D ' + counts.defender + '/' + targets.defender,
+                ' D ' + counts.defender + '/' + targets.defender +
+                ' A ' + counts.defenderAttackers +
+                ' He ' + counts.defenderHealers,
             1
         );
         return;
