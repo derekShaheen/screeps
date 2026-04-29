@@ -111,6 +111,10 @@ function needsMore(room, structureType) {
 }
 
 function canCreateSite(room, pos, structureType) {
+    if(pos.roomName != room.name) {
+        return false;
+    }
+
     if(getTerrain(room, pos.x, pos.y) == TERRAIN_MASK_WALL) {
         return false;
     }
@@ -338,11 +342,29 @@ function getPath(room, fromPos, toPos, range) {
     if(typeof PathFinder !== 'undefined') {
         var result = PathFinder.search(fromPos, {pos: toPos, range: range}, {
             plainCost: 2,
-            swampCost: 10
+            swampCost: 10,
+            maxRooms: 1,
+            roomCallback: function(roomName) {
+                if(roomName != room.name) {
+                    return false;
+                }
+
+                var costs = new PathFinder.CostMatrix();
+                for(var i = 0; i < 50; i++) {
+                    costs.set(i, 0, 255);
+                    costs.set(i, 49, 255);
+                    costs.set(0, i, 255);
+                    costs.set(49, i, 255);
+                }
+
+                return costs;
+            }
         });
 
         if(!result.incomplete) {
-            return result.path;
+            return result.path.filter(function(pos) {
+                return pos.roomName == room.name;
+            });
         }
     }
 
@@ -364,6 +386,10 @@ function planRoadPath(room, fromPos, toPos, range, remaining) {
     var path = getPath(room, fromPos, toPos, range);
 
     for(var i = 0; i < path.length && placed < remaining; i++) {
+        if(path[i].roomName != room.name) {
+            continue;
+        }
+
         var result = createSite(room, path[i], STRUCTURE_ROAD);
         if(result == OK) {
             placed++;
