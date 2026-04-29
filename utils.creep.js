@@ -40,6 +40,31 @@ function hasThreatParts(creep) {
         creep.getActiveBodyparts(CLAIM) > 0;
 }
 
+function isCombatCreep(creep) {
+    return creep.getActiveBodyparts(ATTACK) > 0 ||
+        creep.getActiveBodyparts(RANGED_ATTACK) > 0 ||
+        creep.getActiveBodyparts(HEAL) > 0;
+}
+
+function isSafeTarget(creep, target, range) {
+    if(isCombatCreep(creep)) {
+        return true;
+    }
+
+    if(!target || !target.pos) {
+        return true;
+    }
+
+    var dangerRange = range || 5;
+    var threats = target.pos.findInRange(FIND_HOSTILE_CREEPS, dangerRange, {
+        filter: function(hostile) {
+            return hasThreatParts(hostile);
+        }
+    });
+
+    return threats.length === 0;
+}
+
 function findNearbyThreats(creep, range) {
     return creep.pos.findInRange(FIND_HOSTILE_CREEPS, range, {
         filter: function(hostile) {
@@ -145,7 +170,11 @@ function updateWorkingState(creep, workingLabel, gatheringLabel) {
 }
 
 function findNearestSource(creep) {
-    return creep.pos.findClosestByPath(FIND_SOURCES);
+    return creep.pos.findClosestByPath(FIND_SOURCES, {
+        filter: function(source) {
+            return isSafeTarget(creep, source);
+        }
+    });
 }
 
 function getRoomSourceQueues(room) {
@@ -366,6 +395,10 @@ function getQueuedSourceDestination(creep, source, queue) {
 }
 
 function sourceQueueScore(creep, source) {
+    if(!isSafeTarget(creep, source)) {
+        return 9999 + creep.pos.getRangeTo(source);
+    }
+
     var queue = pruneSourceQueue(creep.room, source);
     var harvestPositions = getAdjacentHarvestPositions(creep, source);
     var slots = Math.max(harvestPositions.length, 1);
@@ -378,12 +411,20 @@ function sourceQueueScore(creep, source) {
 function findQueuedSource(creep) {
     if(creep.memory.energySourceId) {
         var existingSource = Game.getObjectById(creep.memory.energySourceId);
-        if(existingSource && existingSource.room.name == creep.room.name) {
+        if(existingSource &&
+            existingSource.room.name == creep.room.name &&
+            isSafeTarget(creep, existingSource)) {
             return existingSource;
         }
+
+        releaseEnergyQueue(creep);
     }
 
-    var sources = creep.room.find(FIND_SOURCES);
+    var sources = creep.room.find(FIND_SOURCES, {
+        filter: function(source) {
+            return isSafeTarget(creep, source);
+        }
+    });
     if(!sources.length) {
         return null;
     }
@@ -516,8 +557,9 @@ function findStoredEnergy(creep) {
                 return false;
             }
 
-            return structure.structureType == STRUCTURE_CONTAINER ||
-                structure.structureType == STRUCTURE_STORAGE;
+            return isSafeTarget(creep, structure) &&
+                (structure.structureType == STRUCTURE_CONTAINER ||
+                structure.structureType == STRUCTURE_STORAGE);
         }
     });
 }
@@ -525,7 +567,9 @@ function findStoredEnergy(creep) {
 function findDroppedEnergy(creep) {
     return creep.pos.findClosestByPath(FIND_DROPPED_RESOURCES, {
         filter: function(resource) {
-            return resource.resourceType == RESOURCE_ENERGY && resource.amount > 0;
+            return resource.resourceType == RESOURCE_ENERGY &&
+                resource.amount > 0 &&
+                isSafeTarget(creep, resource);
         }
     });
 }
@@ -537,7 +581,9 @@ function findTombstoneEnergy(creep) {
 
     return creep.pos.findClosestByPath(FIND_TOMBSTONES, {
         filter: function(tombstone) {
-            return tombstone.store && tombstone.store[RESOURCE_ENERGY] > 0;
+            return tombstone.store &&
+                tombstone.store[RESOURCE_ENERGY] > 0 &&
+                isSafeTarget(creep, tombstone);
         }
     });
 }
@@ -549,7 +595,9 @@ function findRuinEnergy(creep) {
 
     return creep.pos.findClosestByPath(FIND_RUINS, {
         filter: function(ruin) {
-            return ruin.store && ruin.store[RESOURCE_ENERGY] > 0;
+            return ruin.store &&
+                ruin.store[RESOURCE_ENERGY] > 0 &&
+                isSafeTarget(creep, ruin);
         }
     });
 }
@@ -598,6 +646,12 @@ function collectEnergy(creep, options) {
 }
 
 function transferEnergy(creep, target) {
+    if(!isSafeTarget(creep, target)) {
+        debug.log('debugDefense', creep.name + ' avoiding unsafe transfer target', 5);
+        announceIntent(creep, 'action:avoidUnsafe', 'avoid');
+        return false;
+    }
+
     var result = creep.transfer(target, RESOURCE_ENERGY);
     if(result == ERR_NOT_IN_RANGE) {
         moveTo(creep, target, '#ffffff', 'go fill', 'move:fill');
@@ -614,6 +668,12 @@ function transferEnergy(creep, target) {
 
 function upgrade(creep) {
     if(!creep.room.controller) {
+        return false;
+    }
+
+    if(!isSafeTarget(creep, creep.room.controller)) {
+        debug.log('debugDefense', creep.name + ' avoiding unsafe controller upgrade', 5);
+        announceIntent(creep, 'action:avoidUnsafe', 'avoid');
         return false;
     }
 
@@ -634,6 +694,7 @@ function upgrade(creep) {
 module.exports = {
     announceIntent: announceIntent,
     collectEnergy: collectEnergy,
+    isSafeTarget: isSafeTarget,
     moveTo: moveTo,
     releaseEnergyQueue: releaseEnergyQueue,
     retreatFromHostiles: retreatFromHostiles,

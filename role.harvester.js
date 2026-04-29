@@ -6,7 +6,8 @@ function findFillTarget(creep) {
         filter: function(structure) {
             return (structure.structureType == STRUCTURE_SPAWN ||
                 structure.structureType == STRUCTURE_EXTENSION) &&
-                structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
+                structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0 &&
+                creepUtils.isSafeTarget(creep, structure);
         }
     });
 
@@ -17,7 +18,8 @@ function findFillTarget(creep) {
     var tower = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
         filter: function(structure) {
             return structure.structureType == STRUCTURE_TOWER &&
-                structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
+                structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0 &&
+                creepUtils.isSafeTarget(creep, structure);
         }
     });
 
@@ -31,8 +33,9 @@ function findFillTarget(creep) {
                 return false;
             }
 
-            return structure.structureType == STRUCTURE_STORAGE ||
-                structure.structureType == STRUCTURE_CONTAINER;
+            return (structure.structureType == STRUCTURE_STORAGE ||
+                structure.structureType == STRUCTURE_CONTAINER) &&
+                creepUtils.isSafeTarget(creep, structure);
         }
     });
 }

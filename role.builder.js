@@ -34,6 +34,14 @@ function findConstructionTarget(creep, sites) {
         return null;
     }
 
+    sites = sites.filter(function(site) {
+        return creepUtils.isSafeTarget(creep, site);
+    });
+    if(!sites.length) {
+        debug.log('debugDefense', creep.name + ' found no safe construction sites', 5);
+        return null;
+    }
+
     sites.sort(function(a, b) {
         var priorityDiff = getPriority(a) - getPriority(b);
         if(priorityDiff !== 0) {
@@ -54,14 +62,16 @@ function findConstructionTarget(creep, sites) {
     return sites[0];
 }
 
-function findCriticalRepairTarget(room) {
+function findCriticalRepairTarget(creep) {
+    var room = creep.room;
     var damaged = room.find(FIND_STRUCTURES, {
         filter: function(structure) {
             if(structure.structureType == STRUCTURE_WALL || structure.structureType == STRUCTURE_RAMPART) {
                 return false;
             }
 
-            return structure.hits < structure.hitsMax * 0.25;
+            return structure.hits < structure.hitsMax * 0.25 &&
+                creepUtils.isSafeTarget(creep, structure);
         }
     });
 
@@ -76,13 +86,15 @@ function findCriticalRepairTarget(room) {
     return damaged[0];
 }
 
-function findWallRepairTarget(room) {
+function findWallRepairTarget(creep) {
+    var room = creep.room;
     var targetHits = room.memory.wallTargetHits || 1000;
     var walls = room.find(FIND_STRUCTURES, {
         filter: function(structure) {
             return (structure.structureType == STRUCTURE_WALL ||
                 structure.structureType == STRUCTURE_RAMPART) &&
-                structure.hits < targetHits;
+                structure.hits < targetHits &&
+                creepUtils.isSafeTarget(creep, structure);
         }
     });
 
@@ -97,9 +109,14 @@ function findWallRepairTarget(room) {
     return walls[0];
 }
 
-function findMaintenanceRepairTarget(room) {
+function findMaintenanceRepairTarget(creep) {
+    var room = creep.room;
     var damaged = room.find(FIND_STRUCTURES, {
         filter: function(structure) {
+            if(!creepUtils.isSafeTarget(creep, structure)) {
+                return false;
+            }
+
             if(structure.structureType == STRUCTURE_ROAD) {
                 return structure.hits < structure.hitsMax * 0.5;
             }
@@ -127,10 +144,10 @@ function findMaintenanceRepairTarget(room) {
     return damaged[0];
 }
 
-function findRepairTarget(room) {
-    return findCriticalRepairTarget(room) ||
-        findWallRepairTarget(room) ||
-        findMaintenanceRepairTarget(room);
+function findRepairTarget(creep) {
+    return findCriticalRepairTarget(creep) ||
+        findWallRepairTarget(creep) ||
+        findMaintenanceRepairTarget(creep);
 }
 
 function build(creep, target) {
@@ -306,7 +323,7 @@ var roleBuilder = {
             return;
         }
 
-        var repairTarget = findRepairTarget(creep.room);
+        var repairTarget = findRepairTarget(creep);
         if(repairTarget) {
             debug.log('debugRoles', creep.name + ' repair target ' + repairTarget.structureType + ' in ' + creep.room.name, 10);
             repair(creep, repairTarget);
