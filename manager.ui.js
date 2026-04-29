@@ -148,7 +148,8 @@ var uiManager = {
             'RCL: ' + rcl + ' | ' + formatProgress(controller),
             'Creeps: H ' + counts.harvester + '/' + targets.harvester +
                 ' | B ' + counts.builder + '/' + targets.builder +
-                ' | U ' + counts.upgrader + '/' + targets.upgrader,
+                ' | U ' + counts.upgrader + '/' + targets.upgrader +
+                ' | D ' + counts.defender + '/' + targets.defender,
             'Spawn: ' + getSpawnText(room),
             'Hostiles: ' + hostiles,
             'Towers: ' + getTowerText(room),

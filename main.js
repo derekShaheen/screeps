@@ -5,13 +5,15 @@ var towerManager = require('manager.tower');
 var uiManager = require('manager.ui');
 var roleHarvester = require('role.harvester');
 var roleBuilder = require('role.builder');
+var roleDefender = require('role.defender');
 var roleUpgrader = require('role.upgrader');
 
 var DEFAULT_ROOM_MEMORY = {
     creepTargets: {
         harvester: 2,
         upgrader: 1,
-        builder: 1
+        builder: 1,
+        defender: 1
     },
     wallTargetHits: 1000,
     defenseMode: false,
@@ -97,6 +99,11 @@ function runCreep(creep) {
 
     if(creep.memory.role == 'upgrader') {
         roleUpgrader.run(creep);
+        return;
+    }
+
+    if(creep.memory.role == 'defender') {
+        roleDefender.run(creep);
         return;
     }
 

@@ -3,10 +3,11 @@ var debug = require('utils.debug');
 var BASE_TARGETS = {
     harvester: 2,
     upgrader: 1,
-    builder: 1
+    builder: 1,
+    defender: 1
 };
 
-var ROLE_PRIORITY = ['harvester', 'upgrader', 'builder'];
+var ROLE_PRIORITY = ['harvester', 'upgrader', 'builder', 'defender'];
 
 var BODIES = {
     harvester: [
@@ -20,6 +21,11 @@ var BODIES = {
     builder: [
         [WORK, CARRY, MOVE],
         [WORK, CARRY, CARRY, MOVE, MOVE]
+    ],
+    defender: [
+        [ATTACK, MOVE],
+        [TOUGH, ATTACK, MOVE, MOVE],
+        [TOUGH, ATTACK, ATTACK, MOVE, MOVE]
     ]
 };
 
@@ -47,7 +53,8 @@ function countRoles(room) {
     var counts = {
         harvester: 0,
         upgrader: 0,
-        builder: 0
+        builder: 0,
+        defender: 0
     };
 
     for(var name in Game.creeps) {
@@ -69,7 +76,8 @@ function getTargets(room, counts) {
     var targets = {
         harvester: memoryTargets.harvester === undefined ? BASE_TARGETS.harvester : memoryTargets.harvester,
         upgrader: memoryTargets.upgrader === undefined ? BASE_TARGETS.upgrader : memoryTargets.upgrader,
-        builder: memoryTargets.builder === undefined ? BASE_TARGETS.builder : memoryTargets.builder
+        builder: memoryTargets.builder === undefined ? BASE_TARGETS.builder : memoryTargets.builder,
+        defender: memoryTargets.defender === undefined ? BASE_TARGETS.defender : memoryTargets.defender
     };
 
     var constructionSites = room.find(FIND_CONSTRUCTION_SITES).length;
@@ -133,7 +141,8 @@ function spawnRole(spawn, role, counts, targets) {
             spawn.name + ' spawning ' + name + ' (' + body.join(',') + ') ' +
                 'counts H ' + counts.harvester + '/' + targets.harvester +
                 ' B ' + counts.builder + '/' + targets.builder +
-                ' U ' + counts.upgrader + '/' + targets.upgrader,
+                ' U ' + counts.upgrader + '/' + targets.upgrader +
+                ' D ' + counts.defender + '/' + targets.defender,
             1
         );
         return;
