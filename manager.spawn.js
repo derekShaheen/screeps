@@ -12,19 +12,25 @@ var ROLE_PRIORITY = ['harvester', 'upgrader', 'builder', 'defender'];
 var BODIES = {
     harvester: [
         [WORK, CARRY, MOVE],
-        [WORK, WORK, CARRY, MOVE]
+        [WORK, WORK, CARRY, MOVE],
+        [WORK, WORK, CARRY, CARRY, MOVE],
+        [WORK, WORK, CARRY, CARRY, MOVE, MOVE]
     ],
     upgrader: [
         [WORK, CARRY, MOVE],
-        [WORK, CARRY, CARRY, MOVE, MOVE]
+        [WORK, CARRY, CARRY, MOVE],
+        [WORK, WORK, CARRY, MOVE, MOVE],
+        [WORK, WORK, CARRY, CARRY, MOVE, MOVE]
     ],
     builder: [
         [WORK, CARRY, MOVE],
-        [WORK, CARRY, CARRY, MOVE, MOVE]
+        [WORK, CARRY, CARRY, MOVE],
+        [WORK, WORK, CARRY, MOVE, MOVE],
+        [WORK, WORK, CARRY, CARRY, MOVE, MOVE]
     ],
     defender: [
         [ATTACK, ATTACK, MOVE],
-        [CARRY, ATTACK, ATTACK, MOVE],
+        [TOUGH, ATTACK, ATTACK, MOVE],
         [TOUGH, ATTACK, ATTACK, MOVE, MOVE]
     ]
 };
