@@ -25,10 +25,6 @@ function isRoomEdge(pos) {
     return pos.x <= 0 || pos.x >= 49 || pos.y <= 0 || pos.y >= 49;
 }
 
-function isExitBuffer(pos) {
-    return pos.x <= 1 || pos.x >= 48 || pos.y <= 1 || pos.y >= 48;
-}
-
 function isCoreBuildTile(room, pos) {
     return !isRoomEdge(pos) && getTerrain(room, pos.x, pos.y) != TERRAIN_MASK_WALL;
 }
@@ -168,7 +164,7 @@ function canCreateSite(room, pos, structureType) {
     }
 
     if((structureType == STRUCTURE_WALL || structureType == STRUCTURE_RAMPART) &&
-        isExitBuffer(pos)) {
+        isRoomEdge(pos)) {
         return false;
     }
 
@@ -626,6 +622,10 @@ function shouldPrioritizeDefense(room, settings) {
         return false;
     }
 
+    if(settings.autoExitWalls !== false && !areExitWallsSealed(room)) {
+        return true;
+    }
+
     var minDefenseSites = settings.minDefenseSites || 4;
     return countDefenseStructuresAndSites(room) < minDefenseSites;
 }
@@ -799,12 +799,12 @@ function getExitCoordinate(pos) {
 }
 
 function getInteriorExitCoordinate(value) {
-    if(value <= 1) {
-        return 2;
+    if(value <= 0) {
+        return 1;
     }
 
-    if(value >= 48) {
-        return 47;
+    if(value >= 49) {
+        return 48;
     }
 
     return value;
@@ -814,18 +814,18 @@ function getExitSealPos(room, side, coordinate) {
     var interiorCoordinate = getInteriorExitCoordinate(coordinate);
 
     if(side == 'W') {
-        return new RoomPosition(2, interiorCoordinate, room.name);
+        return new RoomPosition(1, interiorCoordinate, room.name);
     }
 
     if(side == 'E') {
-        return new RoomPosition(47, interiorCoordinate, room.name);
+        return new RoomPosition(48, interiorCoordinate, room.name);
     }
 
     if(side == 'N') {
-        return new RoomPosition(interiorCoordinate, 2, room.name);
+        return new RoomPosition(interiorCoordinate, 1, room.name);
     }
 
-    return new RoomPosition(interiorCoordinate, 47, room.name);
+    return new RoomPosition(interiorCoordinate, 48, room.name);
 }
 
 function hasExitSeal(pos) {
@@ -852,11 +852,15 @@ function isNaturallySealed(room, pos) {
     return getTerrain(room, pos.x, pos.y) == TERRAIN_MASK_WALL;
 }
 
+function isExitSealComplete(room, pos) {
+    return hasExitSeal(pos) || isNaturallySealed(room, pos);
+}
+
 function getExitSealPlan(room, segment) {
     var side = getExitSide(segment[0]);
     var start = getExitCoordinate(segment[0]);
     var end = getExitCoordinate(segment[segment.length - 1]);
-    var margin = 2;
+    var margin = 1;
     var minCoordinate = getInteriorExitCoordinate(start - margin);
     var maxCoordinate = getInteriorExitCoordinate(end + margin);
     var gateCoordinate = getInteriorExitCoordinate(Math.floor((start + end) / 2));
@@ -876,6 +880,28 @@ function getExitSealPlan(room, segment) {
         gate: gateCoordinate,
         positions: positions
     };
+}
+
+function areExitWallsSealed(room) {
+    var segments = groupExitSegments(room);
+    for(var i = 0; i < segments.length; i++) {
+        var plan = getExitSealPlan(room, segments[i]);
+        for(var j = 0; j < plan.positions.length; j++) {
+            if(!isExitSealComplete(room, plan.positions[j].pos)) {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+function getExitSealStructureType(pos, desiredType) {
+    if(desiredType == STRUCTURE_WALL && hasStructure(pos, STRUCTURE_ROAD)) {
+        return STRUCTURE_RAMPART;
+    }
+
+    return desiredType;
 }
 
 function groupExitSegments(room) {
@@ -930,7 +956,7 @@ function planExitSegment(room, segment, remaining) {
         var plannedPosition = status.planned.positions[i];
         var pos = plannedPosition.pos;
 
-        if(hasExitSeal(pos) || isNaturallySealed(room, pos)) {
+        if(isExitSealComplete(room, pos)) {
             continue;
         }
 
@@ -939,7 +965,8 @@ function planExitSegment(room, segment, remaining) {
             continue;
         }
 
-        var result = createSite(room, pos, plannedPosition.structureType);
+        var structureType = getExitSealStructureType(pos, plannedPosition.structureType);
+        var result = createSite(room, pos, structureType);
 
         if(result == OK) {
             status.placed++;
