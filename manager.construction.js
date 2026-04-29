@@ -433,6 +433,20 @@ function countDefenseConstructionSites(room) {
     });
 }
 
+function shouldPrioritizeDefense(room, settings) {
+    var minWallRcl = settings.minWallRcl || 2;
+    if(room.controller.level < minWallRcl) {
+        return false;
+    }
+
+    if(settings.autoRamparts === false && settings.autoExitWalls === false) {
+        return false;
+    }
+
+    var minDefenseSites = settings.minDefenseSites || 4;
+    return countDefenseConstructionSites(room) < minDefenseSites;
+}
+
 function countInfrastructureConstructionSites(room) {
     return countConstructionSites(room, function(site) {
         return !!BUILDING_STRUCTURES[site.structureType] ||
@@ -676,6 +690,13 @@ function planDefense(room, settings, totalBudget) {
     if(placed > 0) {
         debug.log('debugConstruction', room.name + ' placed ' + placed + ' defense construction sites', 1);
     }
+    else if(settings.autoRamparts !== false || settings.autoExitWalls !== false) {
+        debug.log(
+            'debugConstruction',
+            room.name + ' defense planner found no valid defense placements',
+            10
+        );
+    }
 
     return placed;
 }
@@ -697,6 +718,12 @@ var constructionManager = {
                 20
             );
             return;
+        }
+
+        if(shouldPrioritizeDefense(room, settings)) {
+            debug.log('debugConstruction', room.name + ' prioritizing early defense sites', 10);
+            var earlyDefensePlaced = planDefense(room, settings, maxTotalSites - totalSites);
+            totalSites += earlyDefensePlaced;
         }
 
         var infrastructurePlaced = planInfrastructure(room, settings, maxTotalSites - totalSites);

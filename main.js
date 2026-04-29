@@ -29,6 +29,7 @@ var DEFAULT_ROOM_MEMORY = {
         maxTotalSites: 20,
         maxInfrastructureSites: 12,
         maxNewInfrastructureSitesPerTick: 4,
+        minDefenseSites: 4,
         maxDefenseSites: 12,
         maxNewDefenseSitesPerTick: 3,
         minWallRcl: 2
