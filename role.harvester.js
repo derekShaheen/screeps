@@ -8,7 +8,7 @@ function formatPos(pos) {
 function roomHasTransporter(room) {
     for(var name in Game.creeps) {
         var creep = Game.creeps[name];
-        if(creep.room.name == room.name && creep.memory.role == 'transporter') {
+        if(creep.room.name == room.name && creep.memory.role == 'transporter' && !creep.spawning) {
             return true;
         }
     }
