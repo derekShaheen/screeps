@@ -33,6 +33,88 @@ function moveTo(creep, target, stroke, intentMessage, intentKey) {
     return creep.moveTo(target, options);
 }
 
+function hasThreatParts(creep) {
+    return creep.getActiveBodyparts(ATTACK) > 0 ||
+        creep.getActiveBodyparts(RANGED_ATTACK) > 0 ||
+        creep.getActiveBodyparts(WORK) > 0 ||
+        creep.getActiveBodyparts(CLAIM) > 0;
+}
+
+function findNearbyThreats(creep, range) {
+    return creep.pos.findInRange(FIND_HOSTILE_CREEPS, range, {
+        filter: function(hostile) {
+            return hasThreatParts(hostile);
+        }
+    });
+}
+
+function getFallbackRetreatTarget(creep) {
+    var spawn = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
+        filter: function(structure) {
+            return structure.structureType == STRUCTURE_SPAWN;
+        }
+    });
+
+    if(spawn) {
+        return spawn;
+    }
+
+    return creep.room.controller || creep;
+}
+
+function retreatFromHostiles(creep, range) {
+    var fleeRange = range || 5;
+    var threats = findNearbyThreats(creep, fleeRange);
+    if(!threats.length) {
+        return false;
+    }
+
+    releaseEnergyQueue(creep);
+    announceIntent(creep, 'action:retreat', 'retreat');
+
+    if(typeof PathFinder !== 'undefined') {
+        var goals = [];
+        for(var i = 0; i < threats.length; i++) {
+            goals.push({
+                pos: threats[i].pos,
+                range: fleeRange
+            });
+        }
+
+        var result = PathFinder.search(creep.pos, goals, {
+            flee: true,
+            maxRooms: 1,
+            plainCost: 2,
+            swampCost: 10,
+            roomCallback: function(roomName) {
+                if(roomName != creep.room.name) {
+                    return false;
+                }
+
+                var costs = new PathFinder.CostMatrix();
+                for(var edge = 0; edge < 50; edge++) {
+                    costs.set(edge, 0, 255);
+                    costs.set(edge, 49, 255);
+                    costs.set(0, edge, 255);
+                    costs.set(49, edge, 255);
+                }
+
+                return costs;
+            }
+        });
+
+        if(result.path.length) {
+            debug.log('debugDefense', creep.name + ' retreating from ' + threats.length + ' threat(s)', 3);
+            moveTo(creep, result.path[0], '#ff66cc', 'retreat', 'move:retreat');
+            return true;
+        }
+    }
+
+    debug.log('debugDefense', creep.name + ' retreat fallback toward base', 3);
+    moveTo(creep, getFallbackRetreatTarget(creep), '#ff66cc', 'retreat', 'move:retreat');
+    return true;
+}
+
 function setWorking(creep, working, label) {
     if(creep.memory.working !== working) {
         creep.memory.working = working;
@@ -313,16 +395,26 @@ function findQueuedSource(creep) {
     return sources[0];
 }
 
-function withdrawFromTarget(creep, target) {
+function withdrawFromTarget(creep, target, moveIntent, actionIntent) {
     releaseEnergyQueue(creep);
     var result = creep.withdraw(target, RESOURCE_ENERGY);
     if(result == ERR_NOT_IN_RANGE) {
-        moveTo(creep, target, '#ffaa00', 'go energy', 'move:energy');
+        moveTo(
+            creep,
+            target,
+            '#ffaa00',
+            moveIntent || 'go energy',
+            'move:' + (moveIntent || 'energy')
+        );
         return true;
     }
 
     if(result == OK) {
-        announceIntent(creep, 'action:withdraw', 'withdraw');
+        announceIntent(
+            creep,
+            'action:' + (actionIntent || 'withdraw'),
+            actionIntent || 'withdraw'
+        );
         return true;
     }
 
@@ -450,6 +542,18 @@ function findTombstoneEnergy(creep) {
     });
 }
 
+function findRuinEnergy(creep) {
+    if(typeof FIND_RUINS === 'undefined') {
+        return null;
+    }
+
+    return creep.pos.findClosestByPath(FIND_RUINS, {
+        filter: function(ruin) {
+            return ruin.store && ruin.store[RESOURCE_ENERGY] > 0;
+        }
+    });
+}
+
 function collectEnergy(creep, options) {
     options = options || {};
 
@@ -458,23 +562,30 @@ function collectEnergy(creep, options) {
         return true;
     }
 
-    if(options.preferHarvest) {
-        return harvestQueuedSource(creep);
-    }
-
     var tombstone = findTombstoneEnergy(creep);
     if(tombstone) {
-        return withdrawFromTarget(creep, tombstone);
+        debug.log('debugRoles', creep.name + ' looting tombstone energy in ' + creep.room.name, 5);
+        return withdrawFromTarget(creep, tombstone, 'go loot', 'loot');
     }
 
-    var storedEnergy = findStoredEnergy(creep);
-    if(storedEnergy) {
-        return withdrawFromTarget(creep, storedEnergy);
+    var ruin = findRuinEnergy(creep);
+    if(ruin) {
+        debug.log('debugRoles', creep.name + ' looting ruin energy in ' + creep.room.name, 5);
+        return withdrawFromTarget(creep, ruin, 'go loot', 'loot');
     }
 
     var droppedEnergy = findDroppedEnergy(creep);
     if(droppedEnergy) {
         return pickupTarget(creep, droppedEnergy);
+    }
+
+    if(options.preferHarvest) {
+        return harvestQueuedSource(creep);
+    }
+
+    var storedEnergy = findStoredEnergy(creep);
+    if(storedEnergy) {
+        return withdrawFromTarget(creep, storedEnergy);
     }
 
     var source = findNearestSource(creep);
@@ -525,6 +636,7 @@ module.exports = {
     collectEnergy: collectEnergy,
     moveTo: moveTo,
     releaseEnergyQueue: releaseEnergyQueue,
+    retreatFromHostiles: retreatFromHostiles,
     transferEnergy: transferEnergy,
     updateWorkingState: updateWorkingState,
     upgrade: upgrade

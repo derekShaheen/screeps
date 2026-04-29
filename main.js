@@ -3,6 +3,7 @@ var constructionManager = require('manager.construction');
 var spawnManager = require('manager.spawn');
 var towerManager = require('manager.tower');
 var uiManager = require('manager.ui');
+var creepUtils = require('utils.creep');
 var roleHarvester = require('role.harvester');
 var roleBuilder = require('role.builder');
 var roleDefender = require('role.defender');
@@ -87,6 +88,10 @@ function initializeRoomMemory(room) {
 }
 
 function runCreep(creep) {
+    if(creep.memory.role != 'defender' && creepUtils.retreatFromHostiles(creep, 5)) {
+        return;
+    }
+
     if(creep.memory.role == 'harvester') {
         roleHarvester.run(creep);
         return;
