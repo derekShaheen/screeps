@@ -507,6 +507,21 @@ function planRoads(room, remaining) {
     return placed;
 }
 
+function planPriorityTowers(room, settings, totalBudget) {
+    if(settings.autoTowers === false ||
+        totalBudget <= 0 ||
+        !needsMore(room, STRUCTURE_TOWER)) {
+        return 0;
+    }
+
+    var placed = planCoreStructure(room, STRUCTURE_TOWER, 2, 4, Math.min(totalBudget, 1));
+    if(placed > 0) {
+        debug.log('debugConstruction', room.name + ' prioritized tower construction', 1);
+    }
+
+    return placed;
+}
+
 function countDefenseConstructionSites(room) {
     return countConstructionSites(room, function(site) {
         return site.structureType == STRUCTURE_WALL ||
@@ -888,6 +903,9 @@ var constructionManager = {
             );
             return;
         }
+
+        var priorityTowersPlaced = planPriorityTowers(room, settings, maxTotalSites - totalSites);
+        totalSites += priorityTowersPlaced;
 
         if(shouldPrioritizeDefense(room, settings)) {
             debug.log('debugConstruction', room.name + ' prioritizing early defense sites', 10);
