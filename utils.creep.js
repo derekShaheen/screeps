@@ -72,6 +72,14 @@ function updateStuckState(creep, target) {
     return stuckTicks;
 }
 
+function getStuckTicks(creep) {
+    if(!creep.memory.moveState) {
+        return 0;
+    }
+
+    return creep.memory.moveState.stuckTicks || 0;
+}
+
 function moveTo(creep, target, stroke, intentMessage, intentKey) {
     announceIntent(creep, intentKey || ('move:' + intentMessage), intentMessage);
 
@@ -642,7 +650,7 @@ function getQueueHarvestPositions(creep, source) {
 
 function getWaitingPositions(creep, source) {
     var positions = [];
-    for(var range = 2; range <= 3; range++) {
+    for(var range = 3; range <= 5; range++) {
         for(var dx = -range; dx <= range; dx++) {
             for(var dy = -range; dy <= range; dy++) {
                 if(Math.max(Math.abs(dx), Math.abs(dy)) != range) {
@@ -664,7 +672,7 @@ function getWaitingPositions(creep, source) {
     }
 
     positions.sort(function(a, b) {
-        var sourceRangeDiff = a.getRangeTo(source) - b.getRangeTo(source);
+        var sourceRangeDiff = b.getRangeTo(source) - a.getRangeTo(source);
         if(sourceRangeDiff !== 0) {
             return sourceRangeDiff;
         }
@@ -708,13 +716,27 @@ function sourceQueueScore(creep, source) {
     return queuePressure * 20 + creep.pos.getRangeTo(source) + energyBonus;
 }
 
+function isAvoidingSource(creep, source) {
+    return creep.memory.avoidEnergySourceId == source.id &&
+        creep.memory.avoidEnergySourceUntil &&
+        Game.time < creep.memory.avoidEnergySourceUntil;
+}
+
+function avoidSourceTemporarily(creep, source) {
+    creep.memory.avoidEnergySourceId = source.id;
+    creep.memory.avoidEnergySourceUntil = Game.time + 50;
+    delete creep.memory.moveState;
+    releaseEnergyQueue(creep);
+}
+
 function findQueuedSource(creep) {
     if(creep.memory.energySourceId) {
         var existingSource = Game.getObjectById(creep.memory.energySourceId);
         if(existingSource &&
             existingSource.room.name == creep.room.name &&
             isSafeTarget(creep, existingSource) &&
-            canReachBeforeDecay(creep, existingSource, 1)) {
+            canReachBeforeDecay(creep, existingSource, 1) &&
+            !isAvoidingSource(creep, existingSource)) {
             return existingSource;
         }
 
@@ -724,7 +746,8 @@ function findQueuedSource(creep) {
     var sources = creep.room.find(FIND_SOURCES, {
         filter: function(source) {
             return isSafeTarget(creep, source) &&
-                canReachBeforeDecay(creep, source, 1);
+                canReachBeforeDecay(creep, source, 1) &&
+                !isAvoidingSource(creep, source);
         }
     });
     if(!sources.length) {
@@ -860,6 +883,17 @@ function harvestQueuedSource(creep) {
     }
 
     if(!creep.pos.isEqualTo(destination)) {
+        if(!canHarvestFromQueueSlot && getStuckTicks(creep) >= 10) {
+            debug.log(
+                'debugRoles',
+                creep.name + ' leaving crowded source queue ' + source.id +
+                    ' after ' + getStuckTicks(creep) + ' stuck ticks',
+                3
+            );
+            avoidSourceTemporarily(creep, source);
+            return false;
+        }
+
         debug.log(
             'debugRoles',
             creep.name + ' moving to source queue ' + source.id + ' slot ' + (index + 1) +
