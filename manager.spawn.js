@@ -220,6 +220,17 @@ function countSourceContainers(room) {
     return containers.length;
 }
 
+function countSourceContainerSites(room) {
+    var sites = room.find(FIND_CONSTRUCTION_SITES, {
+        filter: function(site) {
+            return site.structureType == STRUCTURE_CONTAINER &&
+                site.pos.findInRange(FIND_SOURCES, 1).length > 0;
+        }
+    });
+
+    return sites.length;
+}
+
 function hasStoredEnergy(room) {
     var stores = room.find(FIND_STRUCTURES, {
         filter: function(structure) {
@@ -248,23 +259,35 @@ function getHostileThreatCount(room) {
 
 function scaleHarvesters(room, targets) {
     var sourceCount = room.find(FIND_SOURCES).length;
-    targets.harvester = Math.max(targets.harvester, sourceCount);
+    var sourceContainers = countSourceContainers(room);
+    var plannedSourceContainers = sourceContainers + countSourceContainerSites(room);
+    var uncoveredSources = Math.max(0, sourceCount - plannedSourceContainers);
+    var desiredHarvesters = sourceCount + uncoveredSources;
 
-    if(countSourceContainers(room) >= sourceCount) {
-        return;
+    if(sourceContainers >= sourceCount) {
+        desiredHarvesters = sourceCount;
+    }
+    else if(sourceContainers > 0 || plannedSourceContainers >= sourceCount) {
+        desiredHarvesters = sourceCount + Math.min(uncoveredSources, 1);
+    }
+    else if(room.energyCapacityAvailable >= 550) {
+        desiredHarvesters = sourceCount + 1;
     }
 
-    if(room.energyCapacityAvailable >= 550) {
-        targets.harvester = Math.max(targets.harvester, sourceCount + 1);
+    if(sourceContainers === 0 &&
+        room.energyCapacityAvailable >= 800 &&
+        countStructures(room, STRUCTURE_EXTENSION) >= 5) {
+        desiredHarvesters = sourceCount + 2;
     }
 
-    if(room.energyCapacityAvailable >= 800 && countStructures(room, STRUCTURE_EXTENSION) >= 5) {
-        targets.harvester = Math.max(targets.harvester, sourceCount + 2);
+    if(sourceContainers === 0 &&
+        room.controller &&
+        room.controller.level >= 4 &&
+        hasStoredEnergy(room)) {
+        desiredHarvesters = sourceCount + 2;
     }
 
-    if(room.controller && room.controller.level >= 4 && hasStoredEnergy(room)) {
-        targets.harvester = Math.max(targets.harvester, sourceCount + 2);
-    }
+    targets.harvester = Math.max(targets.harvester, desiredHarvesters);
 }
 
 function scaleTransporters(room, targets) {
@@ -275,7 +298,15 @@ function scaleTransporters(room, targets) {
         targets.transporter = Math.max(targets.transporter, 1);
     }
 
-    if(sourceContainers >= 2 && room.energyCapacityAvailable >= 550) {
+    if(sourceContainers > 0 && room.energyCapacityAvailable >= 550) {
+        targets.transporter = Math.max(targets.transporter, 2);
+    }
+
+    if(sourceContainers >= 2 && room.energyCapacityAvailable >= 800) {
+        targets.transporter = Math.max(targets.transporter, 3);
+    }
+
+    if(room.memory.defenseMode && countStructures(room, STRUCTURE_TOWER) > 0) {
         targets.transporter = Math.max(targets.transporter, 2);
     }
 
@@ -340,10 +371,7 @@ function scaleDefenders(room, targets) {
         targets.defender = Math.max(targets.defender, 3);
     }
 
-    if(canUseDefenderSquad &&
-        room.controller &&
-        room.controller.level >= 4 &&
-        countStructures(room, STRUCTURE_TOWER) > 0) {
+    if(canUseDefenderSquad && room.memory.keepDefenderSquad) {
         targets.defender = Math.max(targets.defender, 2);
     }
 
