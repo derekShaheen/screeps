@@ -864,11 +864,9 @@ function getExitSealPlan(room, segment) {
     var side = getExitSide(segment[0]);
     var start = getExitCoordinate(segment[0]);
     var end = getExitCoordinate(segment[segment.length - 1]);
-    var margin = 2;
-    var minCoordinate = getInteriorExitCoordinate(start - margin);
-    var maxCoordinate = getInteriorExitCoordinate(end + margin);
+    var minCoordinate = getExitSealBoundary(room, side, start, -1);
+    var maxCoordinate = getExitSealBoundary(room, side, end, 1);
     var gateCoordinate = getInteriorExitCoordinate(Math.floor((start + end) / 2));
-    var returnDepth = 3;
     var positions = [];
 
     for(var coordinate = minCoordinate; coordinate <= maxCoordinate; coordinate++) {
@@ -877,8 +875,6 @@ function getExitSealPlan(room, segment) {
             structureType: coordinate == gateCoordinate ? STRUCTURE_RAMPART : STRUCTURE_WALL
         });
     }
-
-    addExitSealReturns(room, side, minCoordinate, maxCoordinate, returnDepth, positions);
 
     return {
         side: side,
@@ -889,37 +885,21 @@ function getExitSealPlan(room, segment) {
     };
 }
 
-function addExitSealReturnPosition(room, positions, side, coordinate, offset) {
-    var x;
-    var y;
+function getExitSealBoundary(room, side, coordinate, direction) {
+    var current = getInteriorExitCoordinate(coordinate);
 
-    if(side == 'N') {
-        x = coordinate;
-        y = 2 + offset;
-    }
-    else if(side == 'S') {
-        x = coordinate;
-        y = 47 - offset;
-    }
-    else if(side == 'W') {
-        x = 2 + offset;
-        y = coordinate;
-    }
-    else {
-        x = 47 - offset;
-        y = coordinate;
-    }
+    while(true) {
+        var next = current + direction;
+        if(next < 2 || next > 47) {
+            return current;
+        }
 
-    positions.push({
-        pos: new RoomPosition(x, y, room.name),
-        structureType: STRUCTURE_WALL
-    });
-}
+        var pos = getExitSealPos(room, side, next);
+        if(isNaturallySealed(room, pos)) {
+            return current;
+        }
 
-function addExitSealReturns(room, side, minCoordinate, maxCoordinate, depth, positions) {
-    for(var offset = 1; offset <= depth; offset++) {
-        addExitSealReturnPosition(room, positions, side, minCoordinate, offset);
-        addExitSealReturnPosition(room, positions, side, maxCoordinate, offset);
+        current = next;
     }
 }
 
