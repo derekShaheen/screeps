@@ -147,6 +147,7 @@ var uiManager = {
             'Energy: ' + room.energyAvailable + ' / ' + room.energyCapacityAvailable,
             'RCL: ' + rcl + ' | ' + formatProgress(controller),
             'Creeps: H ' + counts.harvester + '/' + targets.harvester +
+                ' | T ' + counts.transporter + '/' + targets.transporter +
                 ' | B ' + counts.builder + '/' + targets.builder +
                 ' | U ' + counts.upgrader + '/' + targets.upgrader +
                 ' | D ' + counts.defender + '/' + targets.defender,
@@ -161,7 +162,7 @@ var uiManager = {
 
         var x = 1;
         var y = 1;
-        room.visual.rect(x - 0.4, y - 0.8, 16.4, lines.length + 0.3, {
+        room.visual.rect(x - 0.4, y - 0.8, 18.4, lines.length + 0.3, {
             fill: '#111111',
             opacity: 0.35,
             stroke: '#66ccff',

@@ -7,11 +7,13 @@ var creepUtils = require('utils.creep');
 var roleHarvester = require('role.harvester');
 var roleBuilder = require('role.builder');
 var roleDefender = require('role.defender');
+var roleTransporter = require('role.transporter');
 var roleUpgrader = require('role.upgrader');
 
 var DEFAULT_ROOM_MEMORY = {
     creepTargets: {
         harvester: 2,
+        transporter: 0,
         upgrader: 1,
         builder: 1,
         defender: 1
@@ -101,6 +103,11 @@ function runCreep(creep) {
 
     if(creep.memory.role == 'builder') {
         roleBuilder.run(creep);
+        return;
+    }
+
+    if(creep.memory.role == 'transporter') {
+        roleTransporter.run(creep);
         return;
     }
 

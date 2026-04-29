@@ -631,9 +631,16 @@ function collectEnergy(creep, options) {
         return harvestQueuedSource(creep);
     }
 
-    var storedEnergy = findStoredEnergy(creep);
-    if(storedEnergy) {
-        return withdrawFromTarget(creep, storedEnergy);
+    if(options.allowStored !== false) {
+        var storedEnergy = findStoredEnergy(creep);
+        if(storedEnergy) {
+            return withdrawFromTarget(creep, storedEnergy);
+        }
+    }
+
+    if(options.allowHarvest === false) {
+        debug.log('debugRoles', creep.name + ' found no stored energy and is not allowed to harvest', 5);
+        return false;
     }
 
     var source = findNearestSource(creep);

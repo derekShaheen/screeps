@@ -309,8 +309,9 @@ function planSourceContainers(room, remaining) {
     var spawn = getPrimarySpawn(room);
     var sources = room.find(FIND_SOURCES);
     var placed = 0;
+    var needed = getAllowedCount(room, STRUCTURE_CONTAINER) - countStructuresAndSites(room, STRUCTURE_CONTAINER);
 
-    for(var i = 0; i < sources.length && placed < remaining; i++) {
+    for(var i = 0; i < sources.length && placed < remaining && placed < needed; i++) {
         if(hasNearbyStructureOrSite(sources[i].pos, STRUCTURE_CONTAINER, 1)) {
             continue;
         }
@@ -328,7 +329,7 @@ function planSourceContainers(room, remaining) {
             return aScore - bScore;
         });
 
-        for(var j = 0; j < positions.length && placed < remaining; j++) {
+        for(var j = 0; j < positions.length && placed < remaining && placed < needed; j++) {
             var result = createSite(room, positions[j], STRUCTURE_CONTAINER);
             if(result == OK) {
                 placed++;
@@ -339,6 +340,80 @@ function planSourceContainers(room, remaining) {
                 return placed;
             }
         }
+    }
+
+    return placed;
+}
+
+function planControllerContainer(room, remaining) {
+    if(remaining <= 0 || !needsMore(room, STRUCTURE_CONTAINER) || !room.controller) {
+        return 0;
+    }
+
+    if(hasNearbyStructureOrSite(room.controller.pos, STRUCTURE_CONTAINER, 3)) {
+        return 0;
+    }
+
+    var spawn = getPrimarySpawn(room);
+    var sources = room.find(FIND_SOURCES);
+    var candidates = [];
+
+    for(var range = 2; range <= 3; range++) {
+        for(var dx = -range; dx <= range; dx++) {
+            for(var dy = -range; dy <= range; dy++) {
+                if(Math.max(Math.abs(dx), Math.abs(dy)) != range) {
+                    continue;
+                }
+
+                var x = room.controller.pos.x + dx;
+                var y = room.controller.pos.y + dy;
+                if(x <= 1 || x >= 48 || y <= 1 || y >= 48) {
+                    continue;
+                }
+
+                var pos = new RoomPosition(x, y, room.name);
+                if(isCoreBuildTile(room, pos)) {
+                    candidates.push(pos);
+                }
+            }
+        }
+    }
+
+    candidates.sort(function(a, b) {
+        var aScore = spawn ? a.getRangeTo(spawn) : 0;
+        var bScore = spawn ? b.getRangeTo(spawn) : 0;
+
+        for(var i = 0; i < sources.length; i++) {
+            aScore += a.getRangeTo(sources[i]) * 0.1;
+            bScore += b.getRangeTo(sources[i]) * 0.1;
+        }
+
+        return aScore - bScore;
+    });
+
+    for(var j = 0; j < candidates.length; j++) {
+        var result = createSite(room, candidates[j], STRUCTURE_CONTAINER);
+        if(result == OK) {
+            debug.log(
+                'debugConstruction',
+                room.name + ' planned controller container at ' + formatPos(candidates[j]),
+                1
+            );
+            return 1;
+        }
+
+        if(result == ERR_FULL) {
+            return 0;
+        }
+    }
+
+    return 0;
+}
+
+function planContainers(room, remaining) {
+    var placed = planSourceContainers(room, remaining);
+    if(placed < remaining) {
+        placed += planControllerContainer(room, remaining - placed);
     }
 
     return placed;
@@ -513,16 +588,16 @@ function planInfrastructure(room, settings, totalBudget) {
         placed += planCoreStructure(room, STRUCTURE_TOWER, 2, 4, remaining - placed);
     }
 
-    if(settings.autoStorage !== false && placed < remaining) {
-        placed += planCoreStructure(room, STRUCTURE_STORAGE, 2, 4, remaining - placed);
-    }
-
     if(settings.autoContainers !== false && placed < remaining) {
-        placed += planSourceContainers(room, remaining - placed);
+        placed += planContainers(room, remaining - placed);
     }
 
     if(settings.autoRoads !== false && placed < remaining) {
         placed += planRoads(room, remaining - placed);
+    }
+
+    if(settings.autoStorage !== false && placed < remaining) {
+        placed += planCoreStructure(room, STRUCTURE_STORAGE, 2, 4, remaining - placed);
     }
 
     if(placed > 0) {

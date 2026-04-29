@@ -2,31 +2,38 @@ var debug = require('utils.debug');
 
 var BASE_TARGETS = {
     harvester: 2,
+    transporter: 0,
     upgrader: 1,
     builder: 1,
     defender: 1
 };
 
-var ROLE_PRIORITY = ['harvester', 'upgrader', 'builder', 'defender'];
+var ROLE_PRIORITY = ['harvester', 'transporter', 'upgrader', 'builder', 'defender'];
 
 var BODIES = {
     harvester: [
         [WORK, CARRY, MOVE],
         [WORK, WORK, CARRY, MOVE],
-        [WORK, WORK, CARRY, CARRY, MOVE],
-        [WORK, WORK, CARRY, CARRY, MOVE, MOVE]
+        [WORK, WORK, WORK, CARRY, MOVE, MOVE],
+        [WORK, WORK, WORK, WORK, CARRY, MOVE, MOVE]
+    ],
+    transporter: [
+        [CARRY, CARRY, MOVE],
+        [CARRY, CARRY, CARRY, MOVE, MOVE],
+        [CARRY, CARRY, CARRY, CARRY, MOVE, MOVE],
+        [CARRY, CARRY, CARRY, CARRY, CARRY, MOVE, MOVE]
     ],
     upgrader: [
         [WORK, CARRY, MOVE],
-        [WORK, CARRY, CARRY, MOVE],
-        [WORK, WORK, CARRY, MOVE, MOVE],
-        [WORK, WORK, CARRY, CARRY, MOVE, MOVE]
+        [WORK, WORK, CARRY, MOVE],
+        [WORK, WORK, CARRY, CARRY, MOVE, MOVE],
+        [WORK, WORK, WORK, CARRY, CARRY, MOVE, MOVE]
     ],
     builder: [
         [WORK, CARRY, MOVE],
         [WORK, CARRY, CARRY, MOVE],
-        [WORK, WORK, CARRY, MOVE, MOVE],
-        [WORK, WORK, CARRY, CARRY, MOVE, MOVE]
+        [WORK, WORK, CARRY, CARRY, MOVE, MOVE],
+        [WORK, WORK, CARRY, CARRY, CARRY, MOVE, MOVE]
     ],
     defender: [
         [ATTACK, ATTACK, MOVE],
@@ -60,6 +67,7 @@ function chooseBody(room, role) {
 function countRoles(room) {
     var counts = {
         harvester: 0,
+        transporter: 0,
         upgrader: 0,
         builder: 0,
         defender: 0
@@ -83,6 +91,7 @@ function getMinimumTargets(room) {
     var memoryTargets = room.memory.creepTargets || BASE_TARGETS;
     return {
         harvester: memoryTargets.harvester === undefined ? BASE_TARGETS.harvester : memoryTargets.harvester,
+        transporter: memoryTargets.transporter === undefined ? BASE_TARGETS.transporter : memoryTargets.transporter,
         upgrader: memoryTargets.upgrader === undefined ? BASE_TARGETS.upgrader : memoryTargets.upgrader,
         builder: memoryTargets.builder === undefined ? BASE_TARGETS.builder : memoryTargets.builder,
         defender: memoryTargets.defender === undefined ? BASE_TARGETS.defender : memoryTargets.defender
@@ -95,6 +104,17 @@ function countStructures(room, structureType) {
             return structure.structureType == structureType;
         }
     }).length;
+}
+
+function countSourceContainers(room) {
+    var containers = room.find(FIND_STRUCTURES, {
+        filter: function(structure) {
+            return structure.structureType == STRUCTURE_CONTAINER &&
+                structure.pos.findInRange(FIND_SOURCES, 1).length > 0;
+        }
+    });
+
+    return containers.length;
 }
 
 function hasStoredEnergy(room) {
@@ -137,6 +157,26 @@ function scaleHarvesters(room, targets) {
 
     if(room.controller && room.controller.level >= 4 && hasStoredEnergy(room)) {
         targets.harvester = Math.max(targets.harvester, sourceCount + 2);
+    }
+}
+
+function scaleTransporters(room, targets) {
+    var sourceContainers = countSourceContainers(room);
+    var hasStorage = countStructures(room, STRUCTURE_STORAGE) > 0;
+
+    if(sourceContainers > 0 || hasStorage) {
+        targets.transporter = Math.max(targets.transporter, 1);
+    }
+
+    if(sourceContainers >= 2 && room.energyCapacityAvailable >= 550) {
+        targets.transporter = Math.max(targets.transporter, 2);
+    }
+
+    if(room.controller &&
+        room.controller.level >= 4 &&
+        hasStoredEnergy(room) &&
+        room.energyCapacityAvailable >= 800) {
+        targets.transporter = Math.max(targets.transporter, 3);
     }
 }
 
@@ -201,6 +241,7 @@ function getTargets(room, counts) {
     var constructionSites = room.find(FIND_CONSTRUCTION_SITES).length;
 
     scaleHarvesters(room, targets);
+    scaleTransporters(room, targets);
     scaleBuilders(room, targets, constructionSites);
     scaleUpgraders(room, counts, targets, constructionSites);
     scaleDefenders(room, targets);
@@ -225,6 +266,7 @@ function getSpawnRole(counts, targets) {
 
 function formatTargets(targets) {
     return 'H ' + targets.harvester +
+        ' T ' + targets.transporter +
         ' B ' + targets.builder +
         ' U ' + targets.upgrader +
         ' D ' + targets.defender;
@@ -264,6 +306,7 @@ function spawnRole(spawn, role, counts, targets) {
             'debugSpawn',
             spawn.name + ' spawning ' + name + ' (' + body.join(',') + ') ' +
                 'counts H ' + counts.harvester + '/' + targets.harvester +
+                ' T ' + counts.transporter + '/' + targets.transporter +
                 ' B ' + counts.builder + '/' + targets.builder +
                 ' U ' + counts.upgrader + '/' + targets.upgrader +
                 ' D ' + counts.defender + '/' + targets.defender,
