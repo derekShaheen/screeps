@@ -35,6 +35,77 @@ function findRepairTarget(room) {
     return critical[0];
 }
 
+function isThreateningHostile(creep) {
+    return creep.getActiveBodyparts(ATTACK) > 0 ||
+        creep.getActiveBodyparts(RANGED_ATTACK) > 0 ||
+        creep.getActiveBodyparts(WORK) > 0 ||
+        creep.getActiveBodyparts(CLAIM) > 0;
+}
+
+function findThreateningHostiles(hostiles) {
+    var threats = [];
+    for(var i = 0; i < hostiles.length; i++) {
+        if(isThreateningHostile(hostiles[i])) {
+            threats.push(hostiles[i]);
+        }
+    }
+
+    return threats;
+}
+
+function canActivateSafeMode(room) {
+    if(!room.controller || !room.controller.my) {
+        return false;
+    }
+
+    if(room.controller.safeMode || room.controller.safeModeCooldown) {
+        return false;
+    }
+
+    return room.controller.safeModeAvailable > 0;
+}
+
+function activateSafeModeIfNeeded(room, hostiles) {
+    var threats = findThreateningHostiles(hostiles);
+    if(!threats.length) {
+        return;
+    }
+
+    room.memory.lastThreatTick = Game.time;
+
+    if(!canActivateSafeMode(room)) {
+        debug.log(
+            'debugDefense',
+            room.name + ' safe mode unavailable for ' + threats.length + ' threat(s)',
+            25
+        );
+        return;
+    }
+
+    if(room.memory.lastSafeModeAttempt &&
+        Game.time - room.memory.lastSafeModeAttempt < 20) {
+        return;
+    }
+
+    room.memory.lastSafeModeAttempt = Game.time;
+    var result = room.controller.activateSafeMode();
+    if(result == OK) {
+        room.memory.lastSafeModeActivated = Game.time;
+        debug.log(
+            'debugDefense',
+            room.name + ' activated safe mode against ' + threats.length + ' threat(s)',
+            1
+        );
+        return;
+    }
+
+    debug.log(
+        'debugDefense',
+        room.name + ' failed to activate safe mode: ' + result,
+        5
+    );
+}
+
 var towerManager = {
     run: function(room) {
         var hostiles = room.find(FIND_HOSTILE_CREEPS);
@@ -42,6 +113,7 @@ var towerManager = {
 
         if(hostiles.length) {
             debug.log('debugDefense', room.name + ' hostile alert: ' + hostiles.length, 1);
+            activateSafeModeIfNeeded(room, hostiles);
         }
 
         var towers = room.find(FIND_MY_STRUCTURES, {
