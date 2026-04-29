@@ -20,6 +20,9 @@ function moveTo(creep, target, stroke) {
 function setWorking(creep, working, label) {
     if(creep.memory.working !== working) {
         creep.memory.working = working;
+        if(working) {
+            releaseEnergyQueue(creep);
+        }
         debug.roleState(creep, working ? 'working' : 'gathering');
         if(label) {
             creep.say(label);
@@ -47,11 +50,255 @@ function findNearestSource(creep) {
     return creep.pos.findClosestByPath(FIND_SOURCES);
 }
 
-function findNearestActiveSource(creep) {
-    return creep.pos.findClosestByPath(FIND_SOURCES_ACTIVE);
+function getRoomSourceQueues(room) {
+    if(!room.memory.sourceQueues) {
+        room.memory.sourceQueues = {};
+    }
+
+    return room.memory.sourceQueues;
+}
+
+function getSourceQueue(room, source) {
+    var queues = getRoomSourceQueues(room);
+    if(!queues[source.id]) {
+        queues[source.id] = {
+            creeps: []
+        };
+    }
+
+    if(!queues[source.id].creeps) {
+        queues[source.id].creeps = [];
+    }
+
+    return queues[source.id];
+}
+
+function removeNameFromQueue(queue, creepName) {
+    var next = [];
+    for(var i = 0; i < queue.creeps.length; i++) {
+        if(queue.creeps[i] != creepName) {
+            next.push(queue.creeps[i]);
+        }
+    }
+
+    queue.creeps = next;
+}
+
+function releaseEnergyQueue(creep) {
+    if(!creep.memory.energySourceId || !creep.room || !creep.room.memory) {
+        delete creep.memory.energySourceId;
+        return;
+    }
+
+    var queues = getRoomSourceQueues(creep.room);
+    for(var sourceId in queues) {
+        removeNameFromQueue(queues[sourceId], creep.name);
+    }
+
+    delete creep.memory.energySourceId;
+}
+
+function pruneSourceQueue(room, source) {
+    var queue = getSourceQueue(room, source);
+    var next = [];
+
+    for(var i = 0; i < queue.creeps.length; i++) {
+        var queuedCreep = Game.creeps[queue.creeps[i]];
+        if(!queuedCreep ||
+            queuedCreep.room.name != room.name ||
+            queuedCreep.store.getFreeCapacity(RESOURCE_ENERGY) === 0 ||
+            queuedCreep.memory.working) {
+            continue;
+        }
+
+        next.push(queue.creeps[i]);
+    }
+
+    queue.creeps = next;
+    return queue;
+}
+
+function joinSourceQueue(creep, source) {
+    var queues = getRoomSourceQueues(creep.room);
+    for(var sourceId in queues) {
+        if(sourceId != source.id) {
+            removeNameFromQueue(queues[sourceId], creep.name);
+        }
+    }
+
+    var queue = pruneSourceQueue(creep.room, source);
+    if(queue.creeps.indexOf(creep.name) == -1) {
+        queue.creeps.push(creep.name);
+        debug.log(
+            'debugRoles',
+            creep.name + ' joined source queue ' + source.id + ' at position ' + queue.creeps.length,
+            3
+        );
+    }
+
+    creep.memory.energySourceId = source.id;
+    return queue;
+}
+
+function getQueueIndex(queue, creepName) {
+    for(var i = 0; i < queue.creeps.length; i++) {
+        if(queue.creeps[i] == creepName) {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+function isWalkableHarvestPosition(pos, creep, ignoreCreeps) {
+    if(pos.x <= 0 || pos.x >= 49 || pos.y <= 0 || pos.y >= 49) {
+        return false;
+    }
+
+    if(creep.room.getTerrain().get(pos.x, pos.y) == TERRAIN_MASK_WALL) {
+        return false;
+    }
+
+    if(!ignoreCreeps) {
+        var creeps = pos.lookFor(LOOK_CREEPS);
+        for(var i = 0; i < creeps.length; i++) {
+            if(creeps[i].name != creep.name) {
+                return false;
+            }
+        }
+    }
+
+    var structures = pos.lookFor(LOOK_STRUCTURES);
+    for(var j = 0; j < structures.length; j++) {
+        var type = structures[j].structureType;
+        if(type != STRUCTURE_ROAD &&
+            type != STRUCTURE_CONTAINER &&
+            type != STRUCTURE_RAMPART) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function getAdjacentHarvestPositions(creep, source) {
+    var positions = [];
+    for(var dx = -1; dx <= 1; dx++) {
+        for(var dy = -1; dy <= 1; dy++) {
+            if(dx === 0 && dy === 0) {
+                continue;
+            }
+
+            var x = source.pos.x + dx;
+            var y = source.pos.y + dy;
+            if(x <= 0 || x >= 49 || y <= 0 || y >= 49) {
+                continue;
+            }
+
+            var pos = new RoomPosition(x, y, source.pos.roomName);
+            if(isWalkableHarvestPosition(pos, creep, true)) {
+                positions.push(pos);
+            }
+        }
+    }
+
+    positions.sort(function(a, b) {
+        if(a.x != b.x) {
+            return a.x - b.x;
+        }
+
+        return a.y - b.y;
+    });
+
+    return positions;
+}
+
+function getWaitingPositions(creep, source) {
+    var positions = [];
+    for(var range = 2; range <= 3; range++) {
+        for(var dx = -range; dx <= range; dx++) {
+            for(var dy = -range; dy <= range; dy++) {
+                if(Math.max(Math.abs(dx), Math.abs(dy)) != range) {
+                    continue;
+                }
+
+                var x = source.pos.x + dx;
+                var y = source.pos.y + dy;
+                if(x <= 0 || x >= 49 || y <= 0 || y >= 49) {
+                    continue;
+                }
+
+                var pos = new RoomPosition(x, y, source.pos.roomName);
+                if(isWalkableHarvestPosition(pos, creep, false)) {
+                    positions.push(pos);
+                }
+            }
+        }
+    }
+
+    positions.sort(function(a, b) {
+        var sourceRangeDiff = a.getRangeTo(source) - b.getRangeTo(source);
+        if(sourceRangeDiff !== 0) {
+            return sourceRangeDiff;
+        }
+
+        return creep.pos.getRangeTo(a) - creep.pos.getRangeTo(b);
+    });
+
+    return positions;
+}
+
+function getQueuedSourceDestination(creep, source, queue) {
+    var index = getQueueIndex(queue, creep.name);
+    var harvestPositions = getAdjacentHarvestPositions(creep, source);
+
+    if(index >= 0 && index < harvestPositions.length) {
+        if(isWalkableHarvestPosition(harvestPositions[index], creep, false)) {
+            return harvestPositions[index];
+        }
+    }
+
+    var waitingPositions = getWaitingPositions(creep, source);
+    if(waitingPositions.length) {
+        var waitingIndex = Math.max(index - harvestPositions.length, 0);
+        return waitingPositions[waitingIndex % waitingPositions.length];
+    }
+
+    return source.pos;
+}
+
+function sourceQueueScore(creep, source) {
+    var queue = pruneSourceQueue(creep.room, source);
+    var harvestPositions = getAdjacentHarvestPositions(creep, source);
+    var slots = Math.max(harvestPositions.length, 1);
+    var queuePressure = queue.creeps.length / slots;
+    var energyBonus = source.energy > 0 ? -2 : 0;
+
+    return queuePressure * 10 + creep.pos.getRangeTo(source) + energyBonus;
+}
+
+function findQueuedSource(creep) {
+    if(creep.memory.energySourceId) {
+        var existingSource = Game.getObjectById(creep.memory.energySourceId);
+        if(existingSource && existingSource.room.name == creep.room.name) {
+            return existingSource;
+        }
+    }
+
+    var sources = creep.room.find(FIND_SOURCES);
+    if(!sources.length) {
+        return null;
+    }
+
+    sources.sort(function(a, b) {
+        return sourceQueueScore(creep, a) - sourceQueueScore(creep, b);
+    });
+
+    return sources[0];
 }
 
 function withdrawFromTarget(creep, target) {
+    releaseEnergyQueue(creep);
     var result = creep.withdraw(target, RESOURCE_ENERGY);
     if(result == ERR_NOT_IN_RANGE) {
         moveTo(creep, target, '#ffaa00');
@@ -62,6 +309,7 @@ function withdrawFromTarget(creep, target) {
 }
 
 function pickupTarget(creep, target) {
+    releaseEnergyQueue(creep);
     var result = creep.pickup(target);
     if(result == ERR_NOT_IN_RANGE) {
         moveTo(creep, target, '#ffaa00');
@@ -95,6 +343,44 @@ function harvestTarget(creep, target) {
     }
 
     return result == OK;
+}
+
+function harvestQueuedSource(creep) {
+    var source = findQueuedSource(creep);
+    if(!source) {
+        return false;
+    }
+
+    var queue = joinSourceQueue(creep, source);
+    var destination = getQueuedSourceDestination(creep, source, queue);
+    var index = getQueueIndex(queue, creep.name);
+    var harvestPositions = getAdjacentHarvestPositions(creep, source);
+    var harvestPosition = index >= 0 && index < harvestPositions.length ? harvestPositions[index] : null;
+    var canHarvestFromQueueSlot = harvestPosition && destination.isEqualTo(harvestPosition);
+
+    if(!creep.pos.isEqualTo(destination)) {
+        debug.log(
+            'debugRoles',
+            creep.name + ' moving to source queue ' + source.id + ' slot ' + (index + 1) +
+                ' at ' + destination.roomName + ':' + destination.x + ',' + destination.y,
+            5
+        );
+        moveTo(creep, destination, canHarvestFromQueueSlot ? '#ffaa00' : '#66ccff');
+        return true;
+    }
+
+    if(canHarvestFromQueueSlot && source.energy > 0) {
+        return harvestTarget(creep, source);
+    }
+
+    debug.log(
+        'debugRoles',
+        creep.name + ' waiting in source queue ' + source.id +
+            ' slot ' + (index + 1) +
+            ' energy=' + source.energy,
+        5
+    );
+    return true;
 }
 
 function findStoredEnergy(creep) {
@@ -134,14 +420,12 @@ function collectEnergy(creep, options) {
     options = options || {};
 
     if(creep.store.getFreeCapacity() === 0) {
+        releaseEnergyQueue(creep);
         return true;
     }
 
     if(options.preferHarvest) {
-        var harvestSource = findNearestActiveSource(creep);
-        if(harvestSource) {
-            return harvestTarget(creep, harvestSource);
-        }
+        return harvestQueuedSource(creep);
     }
 
     var tombstone = findTombstoneEnergy(creep);
@@ -161,7 +445,7 @@ function collectEnergy(creep, options) {
 
     var source = findNearestSource(creep);
     if(source) {
-        return harvestTarget(creep, source);
+        return harvestQueuedSource(creep);
     }
 
     debug.log('debugRoles', creep.name + ' has no energy source in ' + creep.room.name, 5);
@@ -195,6 +479,7 @@ function upgrade(creep) {
 module.exports = {
     collectEnergy: collectEnergy,
     moveTo: moveTo,
+    releaseEnergyQueue: releaseEnergyQueue,
     transferEnergy: transferEnergy,
     updateWorkingState: updateWorkingState,
     upgrade: upgrade
