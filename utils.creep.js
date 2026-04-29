@@ -80,6 +80,74 @@ function getStuckTicks(creep) {
     return creep.memory.moveState.stuckTicks || 0;
 }
 
+function isWalkableMovePosition(creep, pos) {
+    if(pos.x <= 0 || pos.x >= 49 || pos.y <= 0 || pos.y >= 49) {
+        return false;
+    }
+
+    if(creep.room.getTerrain().get(pos.x, pos.y) == TERRAIN_MASK_WALL) {
+        return false;
+    }
+
+    var creeps = pos.lookFor(LOOK_CREEPS);
+    for(var i = 0; i < creeps.length; i++) {
+        if(creeps[i].name != creep.name) {
+            return false;
+        }
+    }
+
+    var structures = pos.lookFor(LOOK_STRUCTURES);
+    for(var j = 0; j < structures.length; j++) {
+        var type = structures[j].structureType;
+        if(type != STRUCTURE_ROAD &&
+            type != STRUCTURE_CONTAINER &&
+            type != STRUCTURE_RAMPART) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function findStepAsidePosition(creep, target) {
+    var targetPos = getMoveTargetPos(target);
+    var candidates = [];
+
+    for(var dx = -1; dx <= 1; dx++) {
+        for(var dy = -1; dy <= 1; dy++) {
+            if(dx === 0 && dy === 0) {
+                continue;
+            }
+
+            var pos = new RoomPosition(creep.pos.x + dx, creep.pos.y + dy, creep.pos.roomName);
+            if(isWalkableMovePosition(creep, pos)) {
+                candidates.push(pos);
+            }
+        }
+    }
+
+    if(!candidates.length) {
+        return null;
+    }
+
+    candidates.sort(function(a, b) {
+        if(targetPos) {
+            var rangeDiff = a.getRangeTo(targetPos) - b.getRangeTo(targetPos);
+            if(rangeDiff !== 0) {
+                return rangeDiff;
+            }
+        }
+
+        if(a.x != b.x) {
+            return a.x - b.x;
+        }
+
+        return a.y - b.y;
+    });
+
+    return candidates[0];
+}
+
 function moveTo(creep, target, stroke, intentMessage, intentKey) {
     announceIntent(creep, intentKey || ('move:' + intentMessage), intentMessage);
 
@@ -92,6 +160,19 @@ function moveTo(creep, target, stroke, intentMessage, intentKey) {
         options.reusePath = 0;
         options.ignoreCreeps = true;
         debug.log('debugRoles', creep.name + ' repathing through traffic after ' + stuckTicks + ' stuck ticks', 5);
+    }
+
+    if(stuckTicks >= 8 && stuckTicks % 3 === 0) {
+        var stepAside = findStepAsidePosition(creep, target);
+        if(stepAside) {
+            debug.log(
+                'debugRoles',
+                creep.name + ' stepping aside from traffic to ' +
+                    stepAside.roomName + ':' + stepAside.x + ',' + stepAside.y,
+                3
+            );
+            return creep.move(creep.pos.getDirectionTo(stepAside));
+        }
     }
 
     if(debug.enabled('debugVisuals') && debug.enabled('debugPaths')) {
@@ -377,6 +458,7 @@ function removeNameFromQueue(queue, creepName) {
 function releaseEnergyQueue(creep) {
     if(!creep.memory.energySourceId || !creep.room || !creep.room.memory) {
         delete creep.memory.energySourceId;
+        delete creep.memory.queueDestination;
         return;
     }
 
@@ -386,6 +468,7 @@ function releaseEnergyQueue(creep) {
     }
 
     delete creep.memory.energySourceId;
+    delete creep.memory.queueDestination;
 }
 
 function getRoomEnergyReservations(room) {
@@ -677,27 +760,64 @@ function getWaitingPositions(creep, source) {
             return sourceRangeDiff;
         }
 
-        return creep.pos.getRangeTo(a) - creep.pos.getRangeTo(b);
+        if(a.x != b.x) {
+            return a.x - b.x;
+        }
+
+        return a.y - b.y;
     });
 
     return positions;
 }
 
+function rememberQueueDestination(creep, source, index, destination) {
+    var previous = creep.memory.queueDestination;
+    if(previous &&
+        previous.sourceId == source.id &&
+        previous.slot == index &&
+        (previous.x != destination.x ||
+        previous.y != destination.y ||
+        previous.roomName != destination.roomName)) {
+        debug.log(
+            'debugRoles',
+            creep.name + ' source queue slot ' + (index + 1) +
+                ' moved from ' + previous.roomName + ':' + previous.x + ',' + previous.y +
+                ' to ' + destination.roomName + ':' + destination.x + ',' + destination.y,
+            3
+        );
+    }
+
+    creep.memory.queueDestination = {
+        sourceId: source.id,
+        slot: index,
+        x: destination.x,
+        y: destination.y,
+        roomName: destination.roomName
+    };
+}
+
 function getQueuedSourceDestination(creep, source, queue) {
     var index = getQueueIndex(queue, creep.name);
     var harvestPositions = getQueueHarvestPositions(creep, source);
+    var destination;
 
     if(index >= 0 && index < harvestPositions.length) {
-        return harvestPositions[index];
+        destination = harvestPositions[index];
+        rememberQueueDestination(creep, source, index, destination);
+        return destination;
     }
 
     var waitingPositions = getWaitingPositions(creep, source);
     if(waitingPositions.length) {
         var waitingIndex = Math.max(index - harvestPositions.length, 0);
-        return waitingPositions[waitingIndex % waitingPositions.length];
+        destination = waitingPositions[waitingIndex % waitingPositions.length];
+        rememberQueueDestination(creep, source, index, destination);
+        return destination;
     }
 
-    return source.pos;
+    destination = source.pos;
+    rememberQueueDestination(creep, source, index, destination);
+    return destination;
 }
 
 function sourceQueueScore(creep, source) {

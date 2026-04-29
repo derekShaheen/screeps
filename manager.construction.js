@@ -814,6 +814,18 @@ function getInteriorExitCoordinate(value) {
     return value;
 }
 
+function getTraversalExitCoordinate(value) {
+    if(value <= 1) {
+        return 1;
+    }
+
+    if(value >= 48) {
+        return 48;
+    }
+
+    return value;
+}
+
 function getExitSealPos(room, side, coordinate) {
     var interiorCoordinate = getInteriorExitCoordinate(coordinate);
 
@@ -830,6 +842,24 @@ function getExitSealPos(room, side, coordinate) {
     }
 
     return new RoomPosition(interiorCoordinate, 47, room.name);
+}
+
+function getExitTraversalPos(room, side, coordinate, depth) {
+    var interiorCoordinate = getTraversalExitCoordinate(coordinate);
+
+    if(side == 'W') {
+        return new RoomPosition(depth, interiorCoordinate, room.name);
+    }
+
+    if(side == 'E') {
+        return new RoomPosition(49 - depth, interiorCoordinate, room.name);
+    }
+
+    if(side == 'N') {
+        return new RoomPosition(interiorCoordinate, depth, room.name);
+    }
+
+    return new RoomPosition(interiorCoordinate, 49 - depth, room.name);
 }
 
 function hasExitSeal(pos) {
@@ -860,24 +890,111 @@ function isExitSealComplete(room, pos) {
     return hasExitSeal(pos) || isNaturallySealed(room, pos);
 }
 
+function getPosKey(pos) {
+    return pos.x + ':' + pos.y;
+}
+
+function isExitTraversalBlocked(room, pos) {
+    if(pos.x < 1 || pos.x > 48 || pos.y < 1 || pos.y > 48) {
+        return true;
+    }
+
+    return isExitSealComplete(room, pos);
+}
+
+function enqueueExitTraversal(room, queue, visited, pos) {
+    if(isExitTraversalBlocked(room, pos)) {
+        return;
+    }
+
+    var key = getPosKey(pos);
+    if(visited[key]) {
+        return;
+    }
+
+    visited[key] = true;
+    queue.push(pos);
+}
+
+function isExitSegmentSealed(room, segment) {
+    var side = getExitSide(segment[0]);
+    var targets = {};
+    var hasTarget = false;
+
+    for(var coordinate = 2; coordinate <= 47; coordinate++) {
+        var target = getExitTraversalPos(room, side, coordinate, 3);
+        if(!isExitTraversalBlocked(room, target)) {
+            targets[getPosKey(target)] = true;
+            hasTarget = true;
+        }
+    }
+
+    if(!hasTarget) {
+        return true;
+    }
+
+    var queue = [];
+    var visited = {};
+    for(var i = 0; i < segment.length; i++) {
+        var start = getExitTraversalPos(room, side, getExitCoordinate(segment[i]), 1);
+        enqueueExitTraversal(room, queue, visited, start);
+    }
+
+    if(!queue.length) {
+        return true;
+    }
+
+    var directions = [
+        [-1, -1], [0, -1], [1, -1],
+        [-1, 0],           [1, 0],
+        [-1, 1],  [0, 1],  [1, 1]
+    ];
+
+    for(var head = 0; head < queue.length; head++) {
+        var current = queue[head];
+        if(targets[getPosKey(current)]) {
+            return false;
+        }
+
+        for(var j = 0; j < directions.length; j++) {
+            enqueueExitTraversal(
+                room,
+                queue,
+                visited,
+                new RoomPosition(
+                    current.x + directions[j][0],
+                    current.y + directions[j][1],
+                    room.name
+                )
+            );
+        }
+    }
+
+    return true;
+}
+
 function getExitSealPlan(room, segment) {
     var side = getExitSide(segment[0]);
     var start = getExitCoordinate(segment[0]);
     var end = getExitCoordinate(segment[segment.length - 1]);
-    var minCoordinate = getExitSealBoundary(room, side, start, -1);
-    var maxCoordinate = getExitSealBoundary(room, side, end, 1);
+    var sealed = isExitSegmentSealed(room, segment);
+    var minCoordinate = sealed ? getInteriorExitCoordinate(start) : getExitSealBoundary(room, side, start, -1);
+    var maxCoordinate = sealed ? getInteriorExitCoordinate(end) : getExitSealBoundary(room, side, end, 1);
     var gateCoordinate = getInteriorExitCoordinate(Math.floor((start + end) / 2));
     var positions = [];
 
-    for(var coordinate = minCoordinate; coordinate <= maxCoordinate; coordinate++) {
-        positions.push({
-            pos: getExitSealPos(room, side, coordinate),
-            structureType: coordinate == gateCoordinate ? STRUCTURE_RAMPART : STRUCTURE_WALL
-        });
+    if(!sealed) {
+        for(var coordinate = minCoordinate; coordinate <= maxCoordinate; coordinate++) {
+            positions.push({
+                pos: getExitSealPos(room, side, coordinate),
+                structureType: coordinate == gateCoordinate ? STRUCTURE_RAMPART : STRUCTURE_WALL
+            });
+        }
     }
 
     return {
         side: side,
+        sealed: sealed,
         start: minCoordinate,
         end: maxCoordinate,
         gate: gateCoordinate,
@@ -972,6 +1089,15 @@ function planExitSegment(room, segment, remaining) {
         missing: 0,
         planned: getExitSealPlan(room, segment)
     };
+
+    if(status.planned.sealed) {
+        debug.log(
+            'debugConstruction',
+            room.name + ' exit ' + status.planned.side + ' seal already blocks traversal',
+            50
+        );
+        return status;
+    }
 
     for(var i = 0; i < status.planned.positions.length; i++) {
         var plannedPosition = status.planned.positions[i];
