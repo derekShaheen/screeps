@@ -53,6 +53,90 @@ function findThreateningHostiles(hostiles) {
     return threats;
 }
 
+function getPrimaryTower(towers) {
+    if(!towers.length) {
+        return null;
+    }
+
+    towers.sort(function(a, b) {
+        return b.store[RESOURCE_ENERGY] - a.store[RESOURCE_ENERGY];
+    });
+
+    return towers[0];
+}
+
+function getHostilePriority(hostile) {
+    var priority = 0;
+
+    priority += hostile.getActiveBodyparts(HEAL) * 60;
+    priority += hostile.getActiveBodyparts(RANGED_ATTACK) * 50;
+    priority += hostile.getActiveBodyparts(ATTACK) * 45;
+    priority += hostile.getActiveBodyparts(WORK) * 25;
+    priority += hostile.getActiveBodyparts(CLAIM) * 20;
+
+    if(priority === 0) {
+        priority = 1;
+    }
+
+    return priority;
+}
+
+function getTowerTargetScore(primaryTower, spawn, hostile) {
+    var towerRange = primaryTower ? primaryTower.pos.getRangeTo(hostile) : 50;
+    var spawnRange = spawn ? hostile.pos.getRangeTo(spawn) : 50;
+
+    return getHostilePriority(hostile) * 1000 -
+        hostile.hits -
+        towerRange * 10 -
+        spawnRange * 5;
+}
+
+function getRememberedTowerTarget(room, hostiles) {
+    if(!room.memory.towerTargetId) {
+        return null;
+    }
+
+    for(var i = 0; i < hostiles.length; i++) {
+        if(hostiles[i].id == room.memory.towerTargetId) {
+            return hostiles[i];
+        }
+    }
+
+    delete room.memory.towerTargetId;
+    return null;
+}
+
+function findTowerAttackTarget(room, towers, hostiles) {
+    if(!hostiles.length) {
+        delete room.memory.towerTargetId;
+        return null;
+    }
+
+    var primaryTower = getPrimaryTower(towers);
+    var spawn = room.find(FIND_MY_STRUCTURES, {
+        filter: function(structure) {
+            return structure.structureType == STRUCTURE_SPAWN;
+        }
+    })[0] || null;
+
+    var remembered = getRememberedTowerTarget(room, hostiles);
+    hostiles.sort(function(a, b) {
+        return getTowerTargetScore(primaryTower, spawn, b) -
+            getTowerTargetScore(primaryTower, spawn, a);
+    });
+
+    if(remembered && remembered.hits > 0) {
+        var rememberedScore = getTowerTargetScore(primaryTower, spawn, remembered);
+        var bestScore = getTowerTargetScore(primaryTower, spawn, hostiles[0]);
+        if(rememberedScore + 1000 >= bestScore) {
+            return remembered;
+        }
+    }
+
+    room.memory.towerTargetId = hostiles[0].id;
+    return hostiles[0];
+}
+
 function canActivateSafeMode(room) {
     if(!room.controller || !room.controller.my) {
         return false;
@@ -126,15 +210,20 @@ var towerManager = {
             return;
         }
 
+        var attackTarget = findTowerAttackTarget(room, towers, hostiles);
+
         for(var i = 0; i < towers.length; i++) {
             var tower = towers[i];
 
-            if(hostiles.length) {
-                var hostile = tower.pos.findClosestByRange(hostiles);
-                if(hostile) {
-                    tower.attack(hostile);
-                    debug.log('debugDefense', tower.id + ' attacking hostile in ' + room.name, 3);
-                }
+            if(attackTarget && tower.store[RESOURCE_ENERGY] >= TOWER_ENERGY_COST) {
+                tower.attack(attackTarget);
+                debug.log(
+                    'debugDefense',
+                    tower.id + ' attacking ' + attackTarget.owner.username +
+                        ' hostile at ' + formatPos(attackTarget.pos) +
+                        ' hits ' + attackTarget.hits + '/' + attackTarget.hitsMax,
+                    3
+                );
                 continue;
             }
 
