@@ -439,9 +439,36 @@ function countDefenseConstructionSites(room) {
     });
 }
 
-function shouldPrioritizeDefense(room, settings) {
+function hasTower(room) {
+    var towers = room.find(FIND_MY_STRUCTURES, {
+        filter: function(structure) {
+            return structure.structureType == STRUCTURE_TOWER;
+        }
+    });
+
+    return towers.length > 0;
+}
+
+function canPlanDefense(room, settings) {
     var minWallRcl = settings.minWallRcl || 2;
     if(room.controller.level < minWallRcl) {
+        return false;
+    }
+
+    if(settings.requireTowerForDefense !== false && !hasTower(room)) {
+        debug.log(
+            'debugConstruction',
+            room.name + ' defense planner waiting for tower',
+            20
+        );
+        return false;
+    }
+
+    return true;
+}
+
+function shouldPrioritizeDefense(room, settings) {
+    if(!canPlanDefense(room, settings)) {
         return false;
     }
 
@@ -721,8 +748,7 @@ function planExitWalls(room, remaining) {
 }
 
 function planDefense(room, settings, totalBudget) {
-    var minWallRcl = settings.minWallRcl || 2;
-    if(room.controller.level < minWallRcl) {
+    if(!canPlanDefense(room, settings)) {
         return 0;
     }
 

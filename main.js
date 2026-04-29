@@ -32,7 +32,8 @@ var DEFAULT_ROOM_MEMORY = {
         minDefenseSites: 4,
         maxDefenseSites: 12,
         maxNewDefenseSitesPerTick: 3,
-        minWallRcl: 2
+        minWallRcl: 2,
+        requireTowerForDefense: true
     }
 };
 
