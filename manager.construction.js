@@ -25,6 +25,10 @@ function isRoomEdge(pos) {
     return pos.x <= 0 || pos.x >= 49 || pos.y <= 0 || pos.y >= 49;
 }
 
+function isExitBuffer(pos) {
+    return pos.x <= 1 || pos.x >= 48 || pos.y <= 1 || pos.y >= 48;
+}
+
 function isCoreBuildTile(room, pos) {
     return !isRoomEdge(pos) && getTerrain(room, pos.x, pos.y) != TERRAIN_MASK_WALL;
 }
@@ -164,7 +168,7 @@ function canCreateSite(room, pos, structureType) {
     }
 
     if((structureType == STRUCTURE_WALL || structureType == STRUCTURE_RAMPART) &&
-        isRoomEdge(pos)) {
+        isExitBuffer(pos)) {
         return false;
     }
 
@@ -799,12 +803,12 @@ function getExitCoordinate(pos) {
 }
 
 function getInteriorExitCoordinate(value) {
-    if(value <= 0) {
-        return 1;
+    if(value <= 1) {
+        return 2;
     }
 
-    if(value >= 49) {
-        return 48;
+    if(value >= 48) {
+        return 47;
     }
 
     return value;
@@ -814,18 +818,18 @@ function getExitSealPos(room, side, coordinate) {
     var interiorCoordinate = getInteriorExitCoordinate(coordinate);
 
     if(side == 'W') {
-        return new RoomPosition(1, interiorCoordinate, room.name);
+        return new RoomPosition(2, interiorCoordinate, room.name);
     }
 
     if(side == 'E') {
-        return new RoomPosition(48, interiorCoordinate, room.name);
+        return new RoomPosition(47, interiorCoordinate, room.name);
     }
 
     if(side == 'N') {
-        return new RoomPosition(interiorCoordinate, 1, room.name);
+        return new RoomPosition(interiorCoordinate, 2, room.name);
     }
 
-    return new RoomPosition(interiorCoordinate, 48, room.name);
+    return new RoomPosition(interiorCoordinate, 47, room.name);
 }
 
 function hasExitSeal(pos) {
@@ -860,10 +864,11 @@ function getExitSealPlan(room, segment) {
     var side = getExitSide(segment[0]);
     var start = getExitCoordinate(segment[0]);
     var end = getExitCoordinate(segment[segment.length - 1]);
-    var margin = 1;
+    var margin = 2;
     var minCoordinate = getInteriorExitCoordinate(start - margin);
     var maxCoordinate = getInteriorExitCoordinate(end + margin);
     var gateCoordinate = getInteriorExitCoordinate(Math.floor((start + end) / 2));
+    var returnDepth = 3;
     var positions = [];
 
     for(var coordinate = minCoordinate; coordinate <= maxCoordinate; coordinate++) {
@@ -873,6 +878,8 @@ function getExitSealPlan(room, segment) {
         });
     }
 
+    addExitSealReturns(room, side, minCoordinate, maxCoordinate, returnDepth, positions);
+
     return {
         side: side,
         start: minCoordinate,
@@ -880,6 +887,40 @@ function getExitSealPlan(room, segment) {
         gate: gateCoordinate,
         positions: positions
     };
+}
+
+function addExitSealReturnPosition(room, positions, side, coordinate, offset) {
+    var x;
+    var y;
+
+    if(side == 'N') {
+        x = coordinate;
+        y = 2 + offset;
+    }
+    else if(side == 'S') {
+        x = coordinate;
+        y = 47 - offset;
+    }
+    else if(side == 'W') {
+        x = 2 + offset;
+        y = coordinate;
+    }
+    else {
+        x = 47 - offset;
+        y = coordinate;
+    }
+
+    positions.push({
+        pos: new RoomPosition(x, y, room.name),
+        structureType: STRUCTURE_WALL
+    });
+}
+
+function addExitSealReturns(room, side, minCoordinate, maxCoordinate, depth, positions) {
+    for(var offset = 1; offset <= depth; offset++) {
+        addExitSealReturnPosition(room, positions, side, minCoordinate, offset);
+        addExitSealReturnPosition(room, positions, side, maxCoordinate, offset);
+    }
 }
 
 function areExitWallsSealed(room) {
