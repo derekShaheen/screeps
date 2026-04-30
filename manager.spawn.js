@@ -6,7 +6,7 @@ var BASE_TARGETS = {
     upgrader: 1,
     builder: 1,
     mineralHarvester: 0,
-    defender: 1
+    defender: 0
 };
 
 var ROLE_PRIORITY = ['harvester', 'transporter', 'upgrader', 'builder', 'defender', 'mineralHarvester'];
@@ -522,19 +522,17 @@ function scaleMineralHarvesters(room, targets) {
 function scaleDefenders(room, targets) {
     var threatCount = getHostileThreatCount(room);
     var canUseDefenderSquad = room.energyCapacityAvailable >= bodyCost(MIN_DEFENDER_HEALER_BODY);
-    var hasTower = countStructures(room, STRUCTURE_TOWER) > 0;
     var wantsStandingSquad = room.memory.keepDefenderSquad === true;
     var needsDefense = threatCount > 0 || room.memory.defenseMode || wantsStandingSquad;
 
-    if(!needsDefense && hasTower) {
+    if(!needsDefense) {
         targets.defender = 0;
         room.memory.defenderSquadEnabled = false;
         return;
     }
 
-    if(!needsDefense) {
-        room.memory.defenderSquadEnabled = false;
-        return;
+    if(!canUseDefenderSquad && room.energyCapacityAvailable >= bodyCost(BODIES.defender[0])) {
+        targets.defender = Math.max(targets.defender, 1);
     }
 
     if(canUseDefenderSquad) {
