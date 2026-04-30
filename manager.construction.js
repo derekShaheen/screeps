@@ -697,6 +697,11 @@ function addConstructionSiteCosts(room, costs) {
             continue;
         }
 
+        if(site.structureType == STRUCTURE_RAMPART) {
+            costs.set(site.pos.x, site.pos.y, 2);
+            continue;
+        }
+
         costs.set(site.pos.x, site.pos.y, 255);
     }
 }
