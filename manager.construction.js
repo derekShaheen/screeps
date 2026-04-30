@@ -963,6 +963,45 @@ function planRoads(room, remaining) {
     return placed;
 }
 
+function planEarlyRoads(room, remaining) {
+    if(remaining <= 0) {
+        return 0;
+    }
+
+    var spawns = getSpawns(room);
+    if(!spawns.length) {
+        return 0;
+    }
+
+    return planSpawnRoadLoops(room, spawns, remaining);
+}
+
+function getEarlyExtensionTarget(room, settings) {
+    var allowed = getAllowedCount(room, STRUCTURE_EXTENSION);
+    if(allowed <= 0) {
+        return 0;
+    }
+
+    var configuredTarget = settings.minExtensionsBeforeContainers;
+    var target = typeof configuredTarget == 'number' ? configuredTarget : 5;
+    return Math.min(allowed, target);
+}
+
+function canPlanContainersNow(room, settings) {
+    var minContainerRcl = typeof settings.minContainerRcl == 'number' ? settings.minContainerRcl : 2;
+    if(room.controller && room.controller.level < minContainerRcl) {
+        return false;
+    }
+
+    var earlyExtensionTarget = getEarlyExtensionTarget(room, settings);
+    if(earlyExtensionTarget > 0 &&
+        countStructuresAndSites(room, STRUCTURE_EXTENSION) < earlyExtensionTarget) {
+        return false;
+    }
+
+    return true;
+}
+
 function removeMisplacedRoadBlockingSites(room, positions) {
     var removed = 0;
     for(var i = 0; i < positions.length; i++) {
@@ -1371,6 +1410,11 @@ function planInfrastructure(room, settings, totalBudget) {
     var remaining = Math.min(siteBudget, maxSites - existingSites);
     var placed = 0;
 
+    if(settings.autoRoads !== false && placed < remaining) {
+        var earlyRoadBudget = settings.maxEarlyRoadSitesPerTick || 2;
+        placed += planEarlyRoads(room, Math.min(remaining - placed, earlyRoadBudget));
+    }
+
     if(settings.autoExtensions !== false && placed < remaining) {
         placed += planCoreStructure(room, STRUCTURE_EXTENSION, 2, 5, remaining - placed);
     }
@@ -1383,7 +1427,7 @@ function planInfrastructure(room, settings, totalBudget) {
         placed += planCoreStructure(room, STRUCTURE_STORAGE, 2, 4, remaining - placed);
     }
 
-    if(settings.autoContainers !== false && placed < remaining) {
+    if(settings.autoContainers !== false && placed < remaining && canPlanContainersNow(room, settings)) {
         placed += planContainers(room, remaining - placed);
     }
 
