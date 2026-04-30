@@ -282,6 +282,31 @@ function countStructures(room, structureType) {
     }).length;
 }
 
+function getTowerAttackEnergyCost() {
+    if(typeof TOWER_ENERGY_COST == 'number') {
+        return TOWER_ENERGY_COST;
+    }
+
+    return 10;
+}
+
+function isReadyDefenseTower(tower) {
+    if(tower.isActive && !tower.isActive()) {
+        return false;
+    }
+
+    return tower.store && tower.store[RESOURCE_ENERGY] >= getTowerAttackEnergyCost();
+}
+
+function countReadyDefenseTowers(room) {
+    return room.find(FIND_MY_STRUCTURES, {
+        filter: function(structure) {
+            return structure.structureType == STRUCTURE_TOWER &&
+                isReadyDefenseTower(structure);
+        }
+    }).length;
+}
+
 function countSourceContainers(room) {
     var containers = room.find(FIND_STRUCTURES, {
         filter: function(structure) {
@@ -380,6 +405,10 @@ function getHostileThreatCount(room) {
     });
 
     return hostiles.length;
+}
+
+function getHostileUnitCount(room) {
+    return room.find(FIND_HOSTILE_CREEPS).length;
 }
 
 function scaleHarvesters(room, targets) {
@@ -520,12 +549,20 @@ function scaleMineralHarvesters(room, targets) {
 }
 
 function scaleDefenders(room, targets) {
+    var hostileCount = getHostileUnitCount(room);
     var threatCount = getHostileThreatCount(room);
+    var readyTowerCount = countReadyDefenseTowers(room);
     var canUseDefenderSquad = room.energyCapacityAvailable >= bodyCost(MIN_DEFENDER_HEALER_BODY);
     var wantsStandingSquad = room.memory.keepDefenderSquad === true;
     var needsDefense = threatCount > 0 || room.memory.defenseMode || wantsStandingSquad;
 
     if(!needsDefense) {
+        targets.defender = 0;
+        room.memory.defenderSquadEnabled = false;
+        return;
+    }
+
+    if(!wantsStandingSquad && hostileCount > 0 && readyTowerCount >= hostileCount) {
         targets.defender = 0;
         room.memory.defenderSquadEnabled = false;
         return;
