@@ -61,6 +61,16 @@ var BODIES = {
 var MIN_DEFENDER_HEALER_BODY = [TOUGH, HEAL, MOVE];
 var MAX_CREEP_PARTS = 50;
 
+var LOW_STAFF_BODY_BUDGET = {
+    harvester: 750,
+    transporter: 800,
+    upgrader: 800,
+    builder: 700,
+    mineralHarvester: 800,
+    defender: 650,
+    defenderHealer: 850
+};
+
 var BODY_GROWTH = {
     harvester: [WORK, CARRY, MOVE],
     transporter: [CARRY, CARRY, MOVE],
@@ -115,6 +125,12 @@ function getBestConfiguredBody(options, energyAvailable) {
     }
 
     return null;
+}
+
+function getMinimumBodyCost(role, bodyType) {
+    var selectedType = bodyType || role;
+    var options = BODIES[selectedType] || BODIES[role] || BODIES.harvester;
+    return bodyCost(options[0]);
 }
 
 function growBody(baseBody, growthParts, energyAvailable) {
@@ -179,17 +195,57 @@ function shouldUseRecoveryBody(room, role, counts, targets) {
     return false;
 }
 
+function getEconomicRoleTotal(values) {
+    return (values.harvester || 0) +
+        (values.transporter || 0) +
+        (values.builder || 0) +
+        (values.upgrader || 0) +
+        (values.mineralHarvester || 0);
+}
+
+function isRoleMissing(room, role, counts, targets) {
+    return targets[role] > 0 && counts[role] === 0;
+}
+
+function isLowStaffed(room, counts, targets) {
+    var wantedTotal = getEconomicRoleTotal(targets);
+    var currentTotal = getEconomicRoleTotal(counts);
+
+    if(wantedTotal > 0 && currentTotal < Math.ceil(wantedTotal * 0.6)) {
+        return true;
+    }
+
+    return isRoleMissing(room, 'transporter', counts, targets) ||
+        isRoleMissing(room, 'builder', counts, targets) ||
+        isRoleMissing(room, 'upgrader', counts, targets) ||
+        (counts.harvester < Math.min(targets.harvester, 2));
+}
+
+function getLowStaffBodyBudget(room, role, bodyType) {
+    var selectedType = bodyType || role;
+    var configuredBudget = LOW_STAFF_BODY_BUDGET[selectedType] || LOW_STAFF_BODY_BUDGET[role] || 700;
+    return Math.min(room.energyAvailable, room.energyCapacityAvailable, configuredBudget);
+}
+
 function getSpawnBodyDecision(room, role, bodyType, counts, targets) {
     var recoverySpawn = shouldUseRecoveryBody(room, role, counts, targets);
-    var desiredBody = chooseBody(room, role, bodyType, room.energyCapacityAvailable);
-    var desiredCost = desiredBody ? bodyCost(desiredBody) : 0;
+    var lowStaffed = isLowStaffed(room, counts, targets);
+    var shouldUseLowStaffBody = recoverySpawn ||
+        (lowStaffed && role != 'defender') ||
+        isRoleMissing(room, role, counts, targets);
+    var desiredBudget = shouldUseLowStaffBody ?
+        getLowStaffBodyBudget(room, role, bodyType) :
+        room.energyCapacityAvailable;
+    var desiredBody = chooseBody(room, role, bodyType, desiredBudget);
+    var desiredCost = desiredBody ? bodyCost(desiredBody) : getMinimumBodyCost(role, bodyType);
 
-    if(recoverySpawn) {
-        var recoveryBody = chooseBody(room, role, bodyType, room.energyAvailable);
+    if(shouldUseLowStaffBody) {
+        var recoveryBody = chooseBody(room, role, bodyType, desiredBudget);
         return {
             body: recoveryBody,
             desiredCost: desiredCost,
-            recoverySpawn: true
+            recoverySpawn: recoverySpawn,
+            lowStaffed: lowStaffed
         };
     }
 
@@ -197,7 +253,8 @@ function getSpawnBodyDecision(room, role, bodyType, counts, targets) {
         return {
             body: null,
             desiredCost: desiredCost,
-            recoverySpawn: false
+            recoverySpawn: false,
+            lowStaffed: lowStaffed
         };
     }
 
@@ -205,14 +262,16 @@ function getSpawnBodyDecision(room, role, bodyType, counts, targets) {
         return {
             body: null,
             desiredCost: desiredCost,
-            recoverySpawn: false
+            recoverySpawn: false,
+            lowStaffed: lowStaffed
         };
     }
 
     return {
         body: desiredBody,
         desiredCost: desiredCost,
-        recoverySpawn: false
+        recoverySpawn: false,
+        lowStaffed: lowStaffed
     };
 }
 
@@ -698,6 +757,7 @@ function spawnRole(spawn, role, counts, targets) {
                 ' (' + body.join(',') + ') ' +
                 'energy ' + bodyCost(body) + '/' + spawn.room.energyCapacityAvailable +
                 (bodyDecision.recoverySpawn ? ' recovery ' : ' ') +
+                (bodyDecision.lowStaffed ? 'lowStaff ' : '') +
                 'counts H ' + counts.harvester + '/' + targets.harvester +
                 ' T ' + counts.transporter + '/' + targets.transporter +
                 ' B ' + counts.builder + '/' + targets.builder +
