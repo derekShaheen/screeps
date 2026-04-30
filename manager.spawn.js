@@ -44,8 +44,8 @@ var BODIES = {
     ],
     defender: [
         [ATTACK, ATTACK, MOVE],
-        [TOUGH, ATTACK, MOVE, MOVE],
-        [TOUGH, ATTACK, ATTACK, MOVE, MOVE],
+        [TOUGH, RANGED_ATTACK, MOVE, MOVE],
+        [TOUGH, RANGED_ATTACK, RANGED_ATTACK, MOVE, MOVE],
         [TOUGH, ATTACK, ATTACK, ATTACK, MOVE, MOVE],
         [TOUGH, TOUGH, ATTACK, ATTACK, ATTACK, MOVE, MOVE]
     ],

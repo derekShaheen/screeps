@@ -2,8 +2,8 @@ var creepUtils = require('utils.creep');
 var debug = require('utils.debug');
 
 var CONSTRUCTION_PRIORITY = {};
-CONSTRUCTION_PRIORITY[STRUCTURE_EXTENSION] = 1;
-CONSTRUCTION_PRIORITY[STRUCTURE_TOWER] = 2;
+CONSTRUCTION_PRIORITY[STRUCTURE_TOWER] = 1;
+CONSTRUCTION_PRIORITY[STRUCTURE_EXTENSION] = 2;
 CONSTRUCTION_PRIORITY[STRUCTURE_CONTAINER] = 3;
 CONSTRUCTION_PRIORITY[STRUCTURE_ROAD] = 4;
 CONSTRUCTION_PRIORITY[STRUCTURE_STORAGE] = 5;
@@ -454,12 +454,14 @@ var roleBuilder = {
 
         var sites = creep.room.find(FIND_CONSTRUCTION_SITES);
         var extensionSites = countSitesByType(sites, STRUCTURE_EXTENSION);
+        var towerSites = countSitesByType(sites, STRUCTURE_TOWER);
         debug.log(
             'debugRoles',
             creep.name + ' builder state working=' + creep.memory.working +
                 ' energy=' + creep.store[RESOURCE_ENERGY] + '/' + creep.store.getCapacity(RESOURCE_ENERGY) +
                 ' sites=' + sites.length +
-                ' extensions=' + extensionSites,
+                ' extensions=' + extensionSites +
+                ' towers=' + towerSites,
             5
         );
 
