@@ -306,6 +306,27 @@ function canReachBeforeDecay(creep, target, range) {
         (targetTicks === null || targetTicks > travelTicks);
 }
 
+function canMineSourceOnArrival(creep, source, range) {
+    if(!source) {
+        return false;
+    }
+
+    if(source.energy > 0) {
+        return true;
+    }
+
+    if(typeof source.ticksToRegeneration != 'number') {
+        return true;
+    }
+
+    var travelTicks = getTravelTicks(creep, source, range === undefined ? 1 : range);
+    if(travelTicks === null) {
+        return false;
+    }
+
+    return source.ticksToRegeneration <= travelTicks;
+}
+
 function findNearbyThreats(creep, range) {
     return creep.pos.findInRange(FIND_HOSTILE_CREEPS, range, {
         filter: function(hostile) {
@@ -416,7 +437,8 @@ function findNearestSource(creep) {
     return creep.pos.findClosestByPath(FIND_SOURCES, {
         filter: function(source) {
             return isSafeTarget(creep, source) &&
-                canReachBeforeDecay(creep, source, 1);
+                canReachBeforeDecay(creep, source, 1) &&
+                canMineSourceOnArrival(creep, source, 1);
         }
     });
 }
@@ -851,7 +873,8 @@ function getSourceHarvestCapacity(creep, source) {
 
 function sourceQueueScore(creep, source) {
     if(!isSafeTarget(creep, source) ||
-        !canReachBeforeDecay(creep, source, 1)) {
+        !canReachBeforeDecay(creep, source, 1) ||
+        !canMineSourceOnArrival(creep, source, 1)) {
         return 9999 + creep.pos.getRangeTo(source);
     }
 
@@ -882,6 +905,7 @@ function findQueuedSource(creep) {
         filter: function(source) {
             return isSafeTarget(creep, source) &&
                 canReachBeforeDecay(creep, source, 1) &&
+                canMineSourceOnArrival(creep, source, 1) &&
                 !isAvoidingSource(creep, source);
         }
     });
@@ -899,6 +923,7 @@ function findQueuedSource(creep) {
             existingSource.room.name == creep.room.name &&
             isSafeTarget(creep, existingSource) &&
             canReachBeforeDecay(creep, existingSource, 1) &&
+            canMineSourceOnArrival(creep, existingSource, 1) &&
             !isAvoidingSource(creep, existingSource)) {
             var bestSource = sources[0];
             var existingQueue = pruneSourceQueue(creep.room, existingSource);
@@ -1081,6 +1106,17 @@ function harvestQueuedSource(creep) {
 
     if(canHarvestFromQueueSlot && source.energy > 0) {
         return harvestTarget(creep, source);
+    }
+
+    if(source.energy <= 0 && !canMineSourceOnArrival(creep, source, 1)) {
+        debug.log(
+            'debugRoles',
+            creep.name + ' leaving empty source queue ' + source.id +
+                ' regen=' + source.ticksToRegeneration,
+            5
+        );
+        releaseEnergyQueue(creep);
+        return false;
     }
 
     debug.log(
@@ -1282,6 +1318,7 @@ function upgrade(creep) {
 module.exports = {
     announceIntent: announceIntent,
     canReachBeforeDecay: canReachBeforeDecay,
+    canMineSourceOnArrival: canMineSourceOnArrival,
     collectEnergy: collectEnergy,
     getAvailableStoredEnergy: getAvailableStoredEnergy,
     getLinkRole: getLinkRole,

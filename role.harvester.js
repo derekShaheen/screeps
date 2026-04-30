@@ -157,6 +157,7 @@ function sourceHasUsableContainer(creep, source) {
     return container &&
         creepUtils.isSafeTarget(creep, container) &&
         creepUtils.canReachBeforeDecay(creep, source, 1) &&
+        creepUtils.canMineSourceOnArrival(creep, source, 1) &&
         creepUtils.canReachBeforeDecay(creep, container, 0);
 }
 
@@ -167,6 +168,7 @@ function chooseContainerSource(creep) {
             remembered.room.name == creep.room.name &&
             creepUtils.isSafeTarget(creep, remembered) &&
             creepUtils.canReachBeforeDecay(creep, remembered, 1) &&
+            creepUtils.canMineSourceOnArrival(creep, remembered, 1) &&
             sourceHasUsableContainer(creep, remembered) &&
             countContainerMiners(creep.room, remembered.id, creep.name) === 0) {
             return remembered;
@@ -179,6 +181,7 @@ function chooseContainerSource(creep) {
         filter: function(source) {
             return creepUtils.isSafeTarget(creep, source) &&
                 creepUtils.canReachBeforeDecay(creep, source, 1) &&
+                creepUtils.canMineSourceOnArrival(creep, source, 1) &&
                 sourceHasUsableContainer(creep, source) &&
                 countContainerMiners(creep.room, source.id, creep.name) === 0;
         }
@@ -203,7 +206,8 @@ function chooseHarvestSource(creep) {
         if(remembered &&
             remembered.room.name == creep.room.name &&
             creepUtils.isSafeTarget(creep, remembered) &&
-            creepUtils.canReachBeforeDecay(creep, remembered, 1)) {
+            creepUtils.canReachBeforeDecay(creep, remembered, 1) &&
+            creepUtils.canMineSourceOnArrival(creep, remembered, 1)) {
             return remembered;
         }
     }
@@ -211,7 +215,8 @@ function chooseHarvestSource(creep) {
     var sources = creep.room.find(FIND_SOURCES, {
         filter: function(source) {
             return creepUtils.isSafeTarget(creep, source) &&
-                creepUtils.canReachBeforeDecay(creep, source, 1);
+                creepUtils.canReachBeforeDecay(creep, source, 1) &&
+                creepUtils.canMineSourceOnArrival(creep, source, 1);
         }
     });
 
@@ -246,8 +251,9 @@ function isContainerOccupiedByOther(creep, container) {
 
 function harvestToContainer(creep, source, container) {
     if(!creepUtils.canReachBeforeDecay(creep, source, 1) ||
+        !creepUtils.canMineSourceOnArrival(creep, source, 1) ||
         !creepUtils.canReachBeforeDecay(creep, container, 0)) {
-        debug.log('debugRoles', creep.name + ' skipped source container that will decay before arrival', 5);
+        debug.log('debugRoles', creep.name + ' skipped source container mining target before arrival', 5);
         return false;
     }
 
