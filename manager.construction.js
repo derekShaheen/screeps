@@ -61,6 +61,10 @@ function hasConstructionSite(pos, structureType) {
     return false;
 }
 
+function hasRoadOrRoadSite(pos) {
+    return hasStructure(pos, STRUCTURE_ROAD) || hasConstructionSite(pos, STRUCTURE_ROAD);
+}
+
 function hasBlockingStructure(pos, structureType) {
     var structures = pos.lookFor(LOOK_STRUCTURES);
     for(var i = 0; i < structures.length; i++) {
@@ -235,6 +239,52 @@ function getPrimarySpawn(room) {
     return spawns[0] || null;
 }
 
+function getSpawns(room) {
+    return room.find(FIND_MY_STRUCTURES, {
+        filter: function(structure) {
+            return structure.structureType == STRUCTURE_SPAWN;
+        }
+    });
+}
+
+function isReservedSpawnRoadOffset(dx, dy) {
+    if(dx === 0 && dy === 0) {
+        return false;
+    }
+
+    var ax = Math.abs(dx);
+    var ay = Math.abs(dy);
+
+    if(ax <= 1 && ay <= 1) {
+        return true;
+    }
+
+    if(ay == 1 && ax <= 2) {
+        return true;
+    }
+
+    if(ax == 2 && ay <= 1) {
+        return true;
+    }
+
+    if(ax <= 1 && ay == 2) {
+        return true;
+    }
+
+    return false;
+}
+
+function isReservedBaseRoadTile(room, pos) {
+    var spawns = getSpawns(room);
+    for(var i = 0; i < spawns.length; i++) {
+        if(isReservedSpawnRoadOffset(pos.x - spawns[i].pos.x, pos.y - spawns[i].pos.y)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 function getCandidateRing(room, anchor, minRange, maxRange) {
     var candidates = [];
     for(var dx = -maxRange; dx <= maxRange; dx++) {
@@ -300,6 +350,10 @@ function planCoreStructure(room, structureType, minRange, maxRange, remaining) {
     sortCoreCandidates(room, candidates, structureType);
 
     for(var i = 0; i < candidates.length && placed < remaining && placed < needed; i++) {
+        if(isReservedBaseRoadTile(room, candidates[i])) {
+            continue;
+        }
+
         var result = createSite(room, candidates[i], structureType);
         if(result == OK) {
             placed++;
@@ -401,6 +455,10 @@ function planAnchoredStructure(room, structureType, anchorPos, minRange, maxRang
     sortByAnchor(room, candidates, anchorPos, structureType);
 
     for(var i = 0; i < candidates.length && placed < remaining && placed < needed; i++) {
+        if(isReservedBaseRoadTile(room, candidates[i])) {
+            continue;
+        }
+
         var result = createSite(room, candidates[i], structureType);
         if(result == OK) {
             placed++;
@@ -580,6 +638,44 @@ function planContainers(room, remaining) {
     return placed;
 }
 
+function addStructureCosts(room, costs) {
+    var structures = room.find(FIND_STRUCTURES);
+    for(var i = 0; i < structures.length; i++) {
+        var structure = structures[i];
+
+        if(structure.structureType == STRUCTURE_ROAD) {
+            costs.set(structure.pos.x, structure.pos.y, 1);
+            continue;
+        }
+
+        if(structure.structureType == STRUCTURE_RAMPART) {
+            costs.set(structure.pos.x, structure.pos.y, 2);
+            continue;
+        }
+
+        if(structure.structureType == STRUCTURE_CONTAINER) {
+            costs.set(structure.pos.x, structure.pos.y, 5);
+            continue;
+        }
+
+        costs.set(structure.pos.x, structure.pos.y, 255);
+    }
+}
+
+function addConstructionSiteCosts(room, costs) {
+    var sites = room.find(FIND_CONSTRUCTION_SITES);
+    for(var i = 0; i < sites.length; i++) {
+        var site = sites[i];
+
+        if(site.structureType == STRUCTURE_ROAD) {
+            costs.set(site.pos.x, site.pos.y, 1);
+            continue;
+        }
+
+        costs.set(site.pos.x, site.pos.y, 255);
+    }
+}
+
 function getPath(room, fromPos, toPos, range) {
     if(typeof PathFinder !== 'undefined') {
         var result = PathFinder.search(fromPos, {pos: toPos, range: range}, {
@@ -598,6 +694,9 @@ function getPath(room, fromPos, toPos, range) {
                     costs.set(0, i, 255);
                     costs.set(49, i, 255);
                 }
+
+                addStructureCosts(room, costs);
+                addConstructionSiteCosts(room, costs);
 
                 return costs;
             }
@@ -623,6 +722,35 @@ function getPath(room, fromPos, toPos, range) {
     return positions;
 }
 
+function planRoadPositions(room, positions, remaining) {
+    var placed = 0;
+    var seen = {};
+
+    for(var i = 0; i < positions.length && placed < remaining; i++) {
+        var pos = positions[i];
+        var key = getPosKey(pos);
+        if(seen[key]) {
+            continue;
+        }
+
+        seen[key] = true;
+        if(hasRoadOrRoadSite(pos)) {
+            continue;
+        }
+
+        var result = createSite(room, pos, STRUCTURE_ROAD);
+        if(result == OK) {
+            placed++;
+        }
+
+        if(result == ERR_FULL) {
+            break;
+        }
+    }
+
+    return placed;
+}
+
 function planRoadPath(room, fromPos, toPos, range, remaining) {
     var placed = 0;
     var path = getPath(room, fromPos, toPos, range);
@@ -645,17 +773,159 @@ function planRoadPath(room, fromPos, toPos, range, remaining) {
     return placed;
 }
 
+function getSpawnRoadLoopPositions(room, spawn) {
+    var positions = [];
+    for(var dx = -2; dx <= 2; dx++) {
+        for(var dy = -2; dy <= 2; dy++) {
+            if(!isReservedSpawnRoadOffset(dx, dy)) {
+                continue;
+            }
+
+            var x = spawn.pos.x + dx;
+            var y = spawn.pos.y + dy;
+            if(x <= 1 || x >= 48 || y <= 1 || y >= 48) {
+                continue;
+            }
+
+            var pos = new RoomPosition(x, y, room.name);
+            if(isCoreBuildTile(room, pos)) {
+                positions.push(pos);
+            }
+        }
+    }
+
+    positions.sort(function(a, b) {
+        return a.getRangeTo(spawn) - b.getRangeTo(spawn);
+    });
+
+    return positions;
+}
+
+function planSpawnRoadLoops(room, spawns, remaining) {
+    var placed = 0;
+    for(var i = 0; i < spawns.length && placed < remaining; i++) {
+        placed += planRoadPositions(
+            room,
+            getSpawnRoadLoopPositions(room, spawns[i]),
+            remaining - placed
+        );
+    }
+
+    if(placed > 0) {
+        debug.log(
+            'debugConstruction',
+            room.name + ' planned ' + placed + ' spawn circulation road site(s)',
+            1
+        );
+    }
+
+    return placed;
+}
+
+function getNearestSpawn(spawns, pos) {
+    var nearest = spawns[0] || null;
+    for(var i = 1; i < spawns.length; i++) {
+        if(spawns[i].pos.getRangeTo(pos) < nearest.pos.getRangeTo(pos)) {
+            nearest = spawns[i];
+        }
+    }
+
+    return nearest;
+}
+
+function getBaseRoadTargets(room) {
+    var targets = [];
+    var structures = room.find(FIND_MY_STRUCTURES, {
+        filter: function(structure) {
+            return structure.structureType == STRUCTURE_EXTENSION ||
+                structure.structureType == STRUCTURE_TOWER ||
+                structure.structureType == STRUCTURE_STORAGE ||
+                structure.structureType == STRUCTURE_TERMINAL ||
+                structure.structureType == STRUCTURE_LINK ||
+                structure.structureType == STRUCTURE_LAB;
+        }
+    });
+
+    var sites = room.find(FIND_CONSTRUCTION_SITES, {
+        filter: function(site) {
+            return site.structureType == STRUCTURE_EXTENSION ||
+                site.structureType == STRUCTURE_TOWER ||
+                site.structureType == STRUCTURE_STORAGE ||
+                site.structureType == STRUCTURE_TERMINAL ||
+                site.structureType == STRUCTURE_LINK ||
+                site.structureType == STRUCTURE_LAB;
+        }
+    });
+
+    for(var i = 0; i < structures.length; i++) {
+        targets.push(structures[i]);
+    }
+
+    for(var j = 0; j < sites.length; j++) {
+        targets.push(sites[j]);
+    }
+
+    return targets;
+}
+
+function planSpawnLinks(room, spawns, remaining) {
+    if(spawns.length <= 1 || remaining <= 0) {
+        return 0;
+    }
+
+    var placed = 0;
+    var primary = spawns[0];
+    for(var i = 1; i < spawns.length && placed < remaining; i++) {
+        placed += planRoadPath(room, primary.pos, spawns[i].pos, 1, remaining - placed);
+    }
+
+    return placed;
+}
+
+function planBaseAccessRoads(room, spawns, remaining) {
+    if(remaining <= 0 || !spawns.length) {
+        return 0;
+    }
+
+    var placed = 0;
+    var primary = spawns[0];
+    var targets = getBaseRoadTargets(room);
+
+    targets.sort(function(a, b) {
+        return a.pos.getRangeTo(primary) - b.pos.getRangeTo(primary);
+    });
+
+    for(var i = 0; i < targets.length && placed < remaining; i++) {
+        var nearestSpawn = getNearestSpawn(spawns, targets[i].pos);
+        placed += planRoadPath(room, nearestSpawn.pos, targets[i].pos, 1, remaining - placed);
+    }
+
+    return placed;
+}
+
 function planRoads(room, remaining) {
     if(remaining <= 0) {
         return 0;
     }
 
-    var spawn = getPrimarySpawn(room);
-    if(!spawn) {
+    var spawns = getSpawns(room);
+    if(!spawns.length) {
         return 0;
     }
 
     var placed = 0;
+    var spawn = spawns[0];
+
+    placed += planSpawnRoadLoops(room, spawns, remaining - placed);
+
+    if(placed < remaining) {
+        placed += planSpawnLinks(room, spawns, remaining - placed);
+    }
+
+    if(placed < remaining) {
+        placed += planBaseAccessRoads(room, spawns, remaining - placed);
+    }
+
     var sources = room.find(FIND_SOURCES);
     for(var i = 0; i < sources.length && placed < remaining; i++) {
         placed += planRoadPath(room, spawn.pos, sources[i].pos, 1, remaining - placed);
