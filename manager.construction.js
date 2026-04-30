@@ -285,6 +285,14 @@ function isReservedSpawnRoadOffset(dx, dy) {
     return false;
 }
 
+function isEarlySpawnRoadOffset(dx, dy) {
+    if(dx === 0 && dy === 0) {
+        return false;
+    }
+
+    return Math.abs(dx) <= 1 && Math.abs(dy) <= 1;
+}
+
 function isReservedBaseRoadTile(room, pos) {
     var spawns = getSpawns(room);
     for(var i = 0; i < spawns.length; i++) {
@@ -826,6 +834,34 @@ function getSpawnRoadLoopPositions(room, spawn) {
     return positions;
 }
 
+function getEarlySpawnRoadPositions(room, spawn) {
+    var positions = [];
+    for(var dx = -1; dx <= 1; dx++) {
+        for(var dy = -1; dy <= 1; dy++) {
+            if(!isEarlySpawnRoadOffset(dx, dy)) {
+                continue;
+            }
+
+            var x = spawn.pos.x + dx;
+            var y = spawn.pos.y + dy;
+            if(x <= 1 || x >= 48 || y <= 1 || y >= 48) {
+                continue;
+            }
+
+            var pos = new RoomPosition(x, y, room.name);
+            if(isCoreBuildTile(room, pos)) {
+                positions.push(pos);
+            }
+        }
+    }
+
+    positions.sort(function(a, b) {
+        return a.getRangeTo(spawn) - b.getRangeTo(spawn);
+    });
+
+    return positions;
+}
+
 function planSpawnRoadLoops(room, spawns, remaining) {
     var placed = 0;
     for(var i = 0; i < spawns.length && placed < remaining; i++) {
@@ -973,7 +1009,24 @@ function planEarlyRoads(room, remaining) {
         return 0;
     }
 
-    return planSpawnRoadLoops(room, spawns, remaining);
+    var placed = 0;
+    for(var i = 0; i < spawns.length && placed < remaining; i++) {
+        placed += planRoadPositions(
+            room,
+            getEarlySpawnRoadPositions(room, spawns[i]),
+            remaining - placed
+        );
+    }
+
+    if(placed > 0) {
+        debug.log(
+            'debugConstruction',
+            room.name + ' planned ' + placed + ' early spawn access road site(s)',
+            1
+        );
+    }
+
+    return placed;
 }
 
 function getEarlyExtensionTarget(room, settings) {
@@ -983,23 +1036,31 @@ function getEarlyExtensionTarget(room, settings) {
     }
 
     var configuredTarget = settings.minExtensionsBeforeContainers;
-    var target = typeof configuredTarget == 'number' ? configuredTarget : 5;
+    var target = typeof configuredTarget == 'number' ? Math.max(5, configuredTarget) : 5;
     return Math.min(allowed, target);
 }
 
-function canPlanContainersNow(room, settings) {
-    var minContainerRcl = typeof settings.minContainerRcl == 'number' ? settings.minContainerRcl : 2;
-    if(room.controller && room.controller.level < minContainerRcl) {
+function hasEarlyExtensionBatch(room, settings) {
+    if(!room.controller || room.controller.level < 2) {
         return false;
     }
 
     var earlyExtensionTarget = getEarlyExtensionTarget(room, settings);
-    if(earlyExtensionTarget > 0 &&
-        countStructuresAndSites(room, STRUCTURE_EXTENSION) < earlyExtensionTarget) {
+    if(earlyExtensionTarget <= 0) {
+        return true;
+    }
+
+    return countStructuresAndSites(room, STRUCTURE_EXTENSION) >= earlyExtensionTarget;
+}
+
+function canPlanContainersNow(room, settings) {
+    var minContainerRcl = typeof settings.minContainerRcl == 'number' ? settings.minContainerRcl : 2;
+    minContainerRcl = Math.max(2, minContainerRcl);
+    if(room.controller && room.controller.level < minContainerRcl) {
         return false;
     }
 
-    return true;
+    return hasEarlyExtensionBatch(room, settings);
 }
 
 function removeMisplacedRoadBlockingSites(room, positions) {
@@ -1431,23 +1492,23 @@ function planInfrastructure(room, settings, totalBudget) {
         placed += planContainers(room, remaining - placed);
     }
 
-    if(settings.autoLinks !== false && placed < remaining) {
+    if(settings.autoLinks !== false && placed < remaining && hasEarlyExtensionBatch(room, settings)) {
         placed += planLinks(room, remaining - placed);
     }
 
-    if(settings.autoExtractor !== false && placed < remaining) {
+    if(settings.autoExtractor !== false && placed < remaining && hasEarlyExtensionBatch(room, settings)) {
         placed += planExtractor(room, remaining - placed);
     }
 
-    if(settings.autoTerminal !== false && placed < remaining) {
+    if(settings.autoTerminal !== false && placed < remaining && hasEarlyExtensionBatch(room, settings)) {
         placed += planTerminal(room, remaining - placed);
     }
 
-    if(settings.autoLabs !== false && placed < remaining) {
+    if(settings.autoLabs !== false && placed < remaining && hasEarlyExtensionBatch(room, settings)) {
         placed += planLabs(room, remaining - placed);
     }
 
-    if(settings.autoRoads !== false && placed < remaining) {
+    if(settings.autoRoads !== false && placed < remaining && hasEarlyExtensionBatch(room, settings)) {
         placed += planRoads(room, remaining - placed);
     }
 

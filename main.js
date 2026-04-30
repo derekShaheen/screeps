@@ -18,9 +18,9 @@ var DEFAULT_ROOM_MEMORY = {
         harvester: 2,
         transporter: 0,
         upgrader: 1,
-        builder: 1,
+        builder: 2,
         mineralHarvester: 0,
-        defender: 1
+        defender: 0
     },
     wallTargetHits: 1000,
     defenseMode: false,
@@ -35,7 +35,7 @@ var DEFAULT_ROOM_MEMORY = {
         autoRemoveMisplacedSites: true,
         maxEarlyRoadSitesPerTick: 2,
         minContainerRcl: 2,
-        minExtensionsBeforeContainers: 3,
+        minExtensionsBeforeContainers: 5,
         autoLinks: true,
         autoExtractor: true,
         autoTerminal: true,

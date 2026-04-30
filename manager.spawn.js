@@ -475,7 +475,7 @@ function scaleHarvesters(room, targets) {
     var sourceContainers = countSourceContainers(room);
     var plannedSourceContainers = sourceContainers + countSourceContainerSites(room);
     var uncoveredSources = Math.max(0, sourceCount - plannedSourceContainers);
-    var desiredHarvesters = sourceCount + uncoveredSources;
+    var desiredHarvesters = sourceCount;
 
     if(sourceContainers >= sourceCount) {
         desiredHarvesters = sourceCount;
@@ -484,20 +484,20 @@ function scaleHarvesters(room, targets) {
         desiredHarvesters = sourceCount + Math.min(uncoveredSources, 1);
     }
     else if(room.energyCapacityAvailable >= 550) {
-        desiredHarvesters = sourceCount + 1;
+        desiredHarvesters = Math.min(sourceCount + 1, 4);
     }
 
     if(sourceContainers === 0 &&
         room.energyCapacityAvailable >= 800 &&
         countStructures(room, STRUCTURE_EXTENSION) >= 5) {
-        desiredHarvesters = sourceCount + 2;
+        desiredHarvesters = Math.min(sourceCount + 1, 4);
     }
 
     if(sourceContainers === 0 &&
         room.controller &&
         room.controller.level >= 4 &&
         hasStoredEnergy(room)) {
-        desiredHarvesters = sourceCount + 2;
+        desiredHarvesters = Math.min(sourceCount + 1, 4);
     }
 
     targets.harvester = Math.max(targets.harvester, desiredHarvesters);
@@ -541,6 +541,12 @@ function scaleBuilders(room, targets, constructionSites) {
 
     if(constructionSites >= 5) {
         targets.builder = Math.max(targets.builder, 2);
+    }
+
+    if(constructionSites >= 5 &&
+        countSourceContainers(room) === 0 &&
+        room.energyCapacityAvailable < 550) {
+        targets.builder = Math.max(targets.builder, 3);
     }
 
     if(constructionSites >= 15) {
