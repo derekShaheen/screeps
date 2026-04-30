@@ -1,5 +1,6 @@
 var creepUtils = require('utils.creep');
 var debug = require('utils.debug');
+var defenseUtils = require('utils.defense');
 
 var CONSTRUCTION_PRIORITY = {};
 CONSTRUCTION_PRIORITY[STRUCTURE_TOWER] = 1;
@@ -36,6 +37,7 @@ function findConstructionTarget(creep, sites) {
 
     sites = sites.filter(function(site) {
         return creepUtils.isSafeTarget(creep, site) &&
+            defenseUtils.shouldBuildConstructionSite(site) &&
             creepUtils.canReachBeforeDecay(creep, site, 3);
     });
     if(!sites.length) {
@@ -95,6 +97,7 @@ function findWallRepairTarget(creep) {
         filter: function(structure) {
             return (structure.structureType == STRUCTURE_WALL ||
                 structure.structureType == STRUCTURE_RAMPART) &&
+                defenseUtils.shouldMaintainDefenseStructure(structure) &&
                 structure.hits < targetHits &&
                 creepUtils.isSafeTarget(creep, structure) &&
                 creepUtils.canReachBeforeDecay(creep, structure, 3);
@@ -118,6 +121,7 @@ function hasWallRepairBacklog(room) {
         filter: function(structure) {
             return (structure.structureType == STRUCTURE_WALL ||
                 structure.structureType == STRUCTURE_RAMPART) &&
+                defenseUtils.shouldMaintainDefenseStructure(structure) &&
                 structure.hits < targetHits;
         }
     });

@@ -1,13 +1,5 @@
 var debug = require('utils.debug');
-
-var KEY_RAMPART_STRUCTURES = {};
-KEY_RAMPART_STRUCTURES[STRUCTURE_SPAWN] = true;
-KEY_RAMPART_STRUCTURES[STRUCTURE_EXTENSION] = true;
-KEY_RAMPART_STRUCTURES[STRUCTURE_TOWER] = true;
-KEY_RAMPART_STRUCTURES[STRUCTURE_STORAGE] = true;
-KEY_RAMPART_STRUCTURES[STRUCTURE_TERMINAL] = true;
-KEY_RAMPART_STRUCTURES[STRUCTURE_LINK] = true;
-KEY_RAMPART_STRUCTURES[STRUCTURE_LAB] = true;
+var defenseUtils = require('utils.defense');
 
 var BUILDING_STRUCTURES = {};
 BUILDING_STRUCTURES[STRUCTURE_EXTENSION] = true;
@@ -1522,28 +1514,54 @@ function planInfrastructure(room, settings, totalBudget) {
     return placed;
 }
 
-function planKeyRamparts(room, remaining) {
+function removeObsoleteInnerRampartSites(room) {
+    var removed = 0;
+    var sites = room.find(FIND_CONSTRUCTION_SITES, {
+        filter: function(site) {
+            return site.structureType == STRUCTURE_RAMPART &&
+                site.my !== false &&
+                defenseUtils.isObsoleteInnerRampartPosition(room, site.pos);
+        }
+    });
+
+    for(var i = 0; i < sites.length; i++) {
+        var result = sites[i].remove();
+        if(result == OK) {
+            removed++;
+            debug.log(
+                'debugConstruction',
+                room.name + ' removed obsolete inner rampart site at ' + formatPos(sites[i].pos),
+                1
+            );
+        }
+    }
+
+    return removed;
+}
+
+function planSpawnAreaRamparts(room, remaining) {
     var placed = 0;
-    var structures = room.find(FIND_MY_STRUCTURES, {
-        filter: function(structure) {
-            return !!KEY_RAMPART_STRUCTURES[structure.structureType];
+    var plan = defenseUtils.getSpawnAreaRampartPlan(room);
+    if(!plan) {
+        return placed;
+    }
+
+    var positions = plan.positions.slice();
+    positions.sort(function(a, b) {
+        var spawn = plan.spawn;
+        var aScore = spawn ? a.getRangeTo(spawn) : 0;
+        var bScore = spawn ? b.getRangeTo(spawn) : 0;
+
+        if(room.controller) {
+            aScore += a.getRangeTo(room.controller) * 0.1;
+            bScore += b.getRangeTo(room.controller) * 0.1;
         }
+
+        return aScore - bScore;
     });
 
-    structures.sort(function(a, b) {
-        if(a.structureType == STRUCTURE_SPAWN && b.structureType != STRUCTURE_SPAWN) {
-            return -1;
-        }
-
-        if(a.structureType != STRUCTURE_SPAWN && b.structureType == STRUCTURE_SPAWN) {
-            return 1;
-        }
-
-        return a.pos.getRangeTo(room.controller || a.pos) - b.pos.getRangeTo(room.controller || b.pos);
-    });
-
-    for(var i = 0; i < structures.length && placed < remaining; i++) {
-        var result = createSite(room, structures[i].pos, STRUCTURE_RAMPART);
+    for(var i = 0; i < positions.length && placed < remaining; i++) {
+        var result = createSite(room, positions[i], STRUCTURE_RAMPART);
         if(result == OK) {
             placed++;
         }
@@ -1551,6 +1569,14 @@ function planKeyRamparts(room, remaining) {
         if(result == ERR_FULL) {
             break;
         }
+    }
+
+    if(placed > 0) {
+        debug.log(
+            'debugConstruction',
+            room.name + ' planned ' + placed + ' spawn area perimeter rampart site(s)',
+            1
+        );
     }
 
     return placed;
@@ -2050,7 +2076,8 @@ function planDefense(room, settings, totalBudget) {
     var placed = 0;
 
     if(settings.autoRamparts !== false) {
-        placed += planKeyRamparts(room, remaining - placed);
+        removeObsoleteInnerRampartSites(room);
+        placed += planSpawnAreaRamparts(room, remaining - placed);
     }
 
     if(settings.autoExitWalls !== false && placed < remaining) {

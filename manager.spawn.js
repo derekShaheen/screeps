@@ -1,4 +1,5 @@
 var debug = require('utils.debug');
+var defenseUtils = require('utils.defense');
 
 var BASE_TARGETS = {
     harvester: 2,
@@ -433,6 +434,7 @@ function countDefenseRepairTargets(room) {
         filter: function(structure) {
             return (structure.structureType == STRUCTURE_WALL ||
                 structure.structureType == STRUCTURE_RAMPART) &&
+                defenseUtils.shouldMaintainDefenseStructure(structure) &&
                 structure.hits < targetHits;
         }
     });
@@ -446,6 +448,7 @@ function countCriticalDefenseRepairTargets(room) {
         filter: function(structure) {
             return (structure.structureType == STRUCTURE_WALL ||
                 structure.structureType == STRUCTURE_RAMPART) &&
+                defenseUtils.shouldMaintainDefenseStructure(structure) &&
                 structure.hits < targetHits;
         }
     });

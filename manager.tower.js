@@ -1,4 +1,5 @@
 var debug = require('utils.debug');
+var defenseUtils = require('utils.defense');
 
 function formatPos(pos) {
     return pos.roomName + ':' + pos.x + ',' + pos.y;
@@ -21,7 +22,8 @@ function findRepairTarget(room) {
     var critical = room.find(FIND_STRUCTURES, {
         filter: function(structure) {
             if(structure.structureType == STRUCTURE_WALL || structure.structureType == STRUCTURE_RAMPART) {
-                return structure.hits < wallTargetHits * 0.5;
+                return defenseUtils.shouldMaintainDefenseStructure(structure) &&
+                    structure.hits < wallTargetHits * 0.5;
             }
 
             if(structure.structureType == STRUCTURE_ROAD) {
