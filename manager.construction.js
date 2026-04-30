@@ -19,6 +19,13 @@ BUILDING_STRUCTURES[STRUCTURE_EXTRACTOR] = true;
 BUILDING_STRUCTURES[STRUCTURE_LAB] = true;
 BUILDING_STRUCTURES[STRUCTURE_TERMINAL] = true;
 
+var REPLANNABLE_ROAD_BLOCKERS = {};
+REPLANNABLE_ROAD_BLOCKERS[STRUCTURE_EXTENSION] = true;
+REPLANNABLE_ROAD_BLOCKERS[STRUCTURE_CONTAINER] = true;
+REPLANNABLE_ROAD_BLOCKERS[STRUCTURE_LINK] = true;
+REPLANNABLE_ROAD_BLOCKERS[STRUCTURE_LAB] = true;
+REPLANNABLE_ROAD_BLOCKERS[STRUCTURE_WALL] = true;
+
 function formatPos(pos) {
     return pos.roomName + ':' + pos.x + ',' + pos.y;
 }
@@ -63,6 +70,10 @@ function hasConstructionSite(pos, structureType) {
 
 function hasRoadOrRoadSite(pos) {
     return hasStructure(pos, STRUCTURE_ROAD) || hasConstructionSite(pos, STRUCTURE_ROAD);
+}
+
+function getConstructionSites(pos) {
+    return pos.lookFor(LOOK_CONSTRUCTION_SITES);
 }
 
 function hasBlockingStructure(pos, structureType) {
@@ -283,6 +294,20 @@ function isReservedBaseRoadTile(room, pos) {
     }
 
     return false;
+}
+
+function canReplanRoadBlocker(structure) {
+    if(structure.structureType == STRUCTURE_ROAD ||
+        structure.structureType == STRUCTURE_RAMPART ||
+        structure.structureType == STRUCTURE_SPAWN ||
+        structure.structureType == STRUCTURE_TOWER ||
+        structure.structureType == STRUCTURE_STORAGE ||
+        structure.structureType == STRUCTURE_TERMINAL ||
+        structure.structureType == STRUCTURE_EXTRACTOR) {
+        return false;
+    }
+
+    return !!REPLANNABLE_ROAD_BLOCKERS[structure.structureType];
 }
 
 function getCandidateRing(room, anchor, minRange, maxRange) {
@@ -936,6 +961,106 @@ function planRoads(room, remaining) {
     }
 
     return placed;
+}
+
+function removeMisplacedRoadBlockingSites(room, positions) {
+    var removed = 0;
+    for(var i = 0; i < positions.length; i++) {
+        var sites = getConstructionSites(positions[i]);
+        for(var j = 0; j < sites.length; j++) {
+            if(sites[j].structureType == STRUCTURE_ROAD ||
+                sites[j].structureType == STRUCTURE_RAMPART ||
+                sites[j].my === false) {
+                continue;
+            }
+
+            var result = sites[j].remove();
+            if(result == OK) {
+                removed++;
+                debug.log(
+                    'debugConstruction',
+                    room.name + ' removed misplaced ' + sites[j].structureType +
+                        ' site from road plan at ' + formatPos(positions[i]),
+                    1
+                );
+            }
+        }
+    }
+
+    return removed;
+}
+
+function getRoadReplanBlockers(room, positions) {
+    var blockers = [];
+    var seen = {};
+
+    for(var i = 0; i < positions.length; i++) {
+        if(hasRoadOrRoadSite(positions[i])) {
+            continue;
+        }
+
+        var structures = positions[i].lookFor(LOOK_STRUCTURES);
+        for(var j = 0; j < structures.length; j++) {
+            if(!canReplanRoadBlocker(structures[j]) || seen[structures[j].id]) {
+                continue;
+            }
+
+            seen[structures[j].id] = true;
+            blockers.push(structures[j]);
+        }
+    }
+
+    return blockers;
+}
+
+function rememberRoadReplanTargets(room, blockers) {
+    if(!blockers.length) {
+        delete room.memory.roadReplanTargets;
+        return;
+    }
+
+    blockers.sort(function(a, b) {
+        return a.hits - b.hits;
+    });
+
+    room.memory.roadReplanTargets = blockers.slice(0, 10).map(function(structure) {
+        return structure.id;
+    });
+}
+
+function updateRoadReplanTargets(room, settings) {
+    if(settings.autoRoads === false ||
+        settings.autoRoadReplanning === false ||
+        settings.autoDismantleRoadBlockers === false) {
+        delete room.memory.roadReplanTargets;
+        return;
+    }
+
+    var spawns = getSpawns(room);
+    if(!spawns.length) {
+        delete room.memory.roadReplanTargets;
+        return;
+    }
+
+    var positions = [];
+    for(var i = 0; i < spawns.length; i++) {
+        positions = positions.concat(getSpawnRoadLoopPositions(room, spawns[i]));
+    }
+
+    if(settings.autoRemoveMisplacedSites !== false) {
+        removeMisplacedRoadBlockingSites(room, positions);
+    }
+
+    var blockers = getRoadReplanBlockers(room, positions);
+    rememberRoadReplanTargets(room, blockers);
+
+    if(blockers.length) {
+        debug.log(
+            'debugConstruction',
+            room.name + ' marked ' + blockers.length + ' road replan blocker(s) for dismantle',
+            20
+        );
+    }
 }
 
 function getSourceContainer(source) {
@@ -1854,6 +1979,7 @@ var constructionManager = {
 
         var settings = room.memory.construction || {};
         updateWallTargetHits(room, settings);
+        updateRoadReplanTargets(room, settings);
 
         planPriorityTowers(room, settings, 2);
         var maxTotalSites = settings.maxTotalSites || 20;

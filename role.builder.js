@@ -268,6 +268,85 @@ function repair(creep, target) {
     return result == OK;
 }
 
+function getRoadReplanTargets(room) {
+    if(!room.memory.roadReplanTargets) {
+        return [];
+    }
+
+    var targets = [];
+    var nextIds = [];
+    for(var i = 0; i < room.memory.roadReplanTargets.length; i++) {
+        var target = Game.getObjectById(room.memory.roadReplanTargets[i]);
+        if(!target || target.room.name != room.name) {
+            continue;
+        }
+
+        targets.push(target);
+        nextIds.push(target.id);
+    }
+
+    room.memory.roadReplanTargets = nextIds;
+    return targets;
+}
+
+function findRoadReplanTarget(creep) {
+    if(creep.store.getFreeCapacity(RESOURCE_ENERGY) === 0 ||
+        creep.getActiveBodyparts(WORK) === 0 ||
+        creep.room.memory.defenseMode ||
+        hasHostileThreats(creep.room)) {
+        return null;
+    }
+
+    var targets = getRoadReplanTargets(creep.room).filter(function(target) {
+        return creepUtils.isSafeTarget(creep, target) &&
+            creepUtils.canReachBeforeDecay(creep, target, 1);
+    });
+
+    if(!targets.length) {
+        return null;
+    }
+
+    targets.sort(function(a, b) {
+        return creep.pos.getRangeTo(a) - creep.pos.getRangeTo(b) ||
+            a.hits - b.hits;
+    });
+
+    return targets[0];
+}
+
+function dismantleRoadReplanTarget(creep, target) {
+    if(!creepUtils.canReachBeforeDecay(creep, target, 1)) {
+        debug.log('debugRoles', creep.name + ' skipped road replan target that will decay before arrival', 5);
+        return false;
+    }
+
+    var result = creep.dismantle(target);
+    if(result == ERR_NOT_IN_RANGE) {
+        debug.log(
+            'debugRoles',
+            creep.name + ' moving to clear misplaced ' + target.structureType +
+                ' at ' + formatPos(target.pos),
+            5
+        );
+        creepUtils.moveTo(creep, target, '#ffcc66', 'clear road', 'move:roadReplan');
+        return true;
+    }
+
+    if(result == OK) {
+        creepUtils.announceIntent(creep, 'action:roadReplan', 'clear');
+        debug.log(
+            'debugRoles',
+            creep.name + ' dismantling misplaced ' + target.structureType +
+                ' for road replan at ' + formatPos(target.pos),
+            3
+        );
+        return true;
+    }
+
+    debug.log('debugRoles', creep.name + ' road replan dismantle failed: ' + result, 5);
+    return false;
+}
+
 function isSamePos(pos, memoryPos) {
     return memoryPos &&
         pos.x == memoryPos.x &&
@@ -405,6 +484,11 @@ var roleBuilder = {
         if(repairTarget) {
             debug.log('debugRoles', creep.name + ' repair target ' + repairTarget.structureType + ' in ' + creep.room.name, 10);
             repair(creep, repairTarget);
+            return;
+        }
+
+        var roadReplanTarget = findRoadReplanTarget(creep);
+        if(roadReplanTarget && dismantleRoadReplanTarget(creep, roadReplanTarget)) {
             return;
         }
 
