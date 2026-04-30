@@ -1097,9 +1097,10 @@ function planPriorityTowers(room, settings, totalBudget) {
         return 0;
     }
 
-    var placed = planCoreStructure(room, STRUCTURE_TOWER, 2, 4, Math.min(totalBudget, 1));
+    var missing = getAllowedCount(room, STRUCTURE_TOWER) - countStructuresAndSites(room, STRUCTURE_TOWER);
+    var placed = planCoreStructure(room, STRUCTURE_TOWER, 2, 4, Math.min(totalBudget, missing));
     if(placed > 0) {
-        debug.log('debugConstruction', room.name + ' prioritized tower construction', 1);
+        debug.log('debugConstruction', room.name + ' prioritized ' + placed + ' tower construction site(s)', 1);
     }
 
     return placed;
@@ -1854,6 +1855,7 @@ var constructionManager = {
         var settings = room.memory.construction || {};
         updateWallTargetHits(room, settings);
 
+        planPriorityTowers(room, settings, 2);
         var maxTotalSites = settings.maxTotalSites || 20;
         var totalSites = room.find(FIND_CONSTRUCTION_SITES).length;
 
@@ -1865,9 +1867,6 @@ var constructionManager = {
             );
             return;
         }
-
-        var priorityTowersPlaced = planPriorityTowers(room, settings, maxTotalSites - totalSites);
-        totalSites += priorityTowersPlaced;
 
         if(shouldPrioritizeDefense(room, settings)) {
             debug.log('debugConstruction', room.name + ' prioritizing early defense sites', 10);
