@@ -82,7 +82,11 @@ function getInfrastructureSiteText(room) {
         road: 0,
         tower: 0,
         container: 0,
-        storage: 0
+        storage: 0,
+        link: 0,
+        extractor: 0,
+        terminal: 0,
+        lab: 0
     };
 
     var sites = room.find(FIND_CONSTRUCTION_SITES, {
@@ -91,7 +95,11 @@ function getInfrastructureSiteText(room) {
                 site.structureType == STRUCTURE_ROAD ||
                 site.structureType == STRUCTURE_TOWER ||
                 site.structureType == STRUCTURE_CONTAINER ||
-                site.structureType == STRUCTURE_STORAGE;
+                site.structureType == STRUCTURE_STORAGE ||
+                site.structureType == STRUCTURE_LINK ||
+                site.structureType == STRUCTURE_EXTRACTOR ||
+                site.structureType == STRUCTURE_TERMINAL ||
+                site.structureType == STRUCTURE_LAB;
         }
     });
 
@@ -115,13 +123,33 @@ function getInfrastructureSiteText(room) {
         if(siteIs(sites[i], STRUCTURE_STORAGE)) {
             counts.storage++;
         }
+
+        if(siteIs(sites[i], STRUCTURE_LINK)) {
+            counts.link++;
+        }
+
+        if(siteIs(sites[i], STRUCTURE_EXTRACTOR)) {
+            counts.extractor++;
+        }
+
+        if(siteIs(sites[i], STRUCTURE_TERMINAL)) {
+            counts.terminal++;
+        }
+
+        if(siteIs(sites[i], STRUCTURE_LAB)) {
+            counts.lab++;
+        }
     }
 
     return 'E ' + counts.extension +
         ' | R ' + counts.road +
         ' | T ' + counts.tower +
         ' | C ' + counts.container +
-        ' | S ' + counts.storage;
+        ' | S ' + counts.storage +
+        ' | L ' + counts.link +
+        ' | Ex ' + counts.extractor +
+        ' | Te ' + counts.terminal +
+        ' | La ' + counts.lab;
 }
 
 function siteIs(site, structureType) {
@@ -150,6 +178,7 @@ var uiManager = {
                 ' | T ' + counts.transporter + '/' + targets.transporter +
                 ' | B ' + counts.builder + '/' + targets.builder +
                 ' | U ' + counts.upgrader + '/' + targets.upgrader +
+                ' | M ' + counts.mineralHarvester + '/' + targets.mineralHarvester +
                 ' | D ' + counts.defender + '/' + targets.defender,
             'Spawn: ' + getSpawnText(room),
             'Hostiles: ' + hostiles,

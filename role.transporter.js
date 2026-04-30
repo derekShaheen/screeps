@@ -2,6 +2,7 @@ var creepUtils = require('utils.creep');
 var debug = require('utils.debug');
 
 var TOWER_PEACE_REFILL_TARGET = 600;
+var TERMINAL_ENERGY_TARGET = 5000;
 
 function formatPos(pos) {
     return pos.roomName + ':' + pos.x + ',' + pos.y;
@@ -41,8 +42,16 @@ function findFallbackStoredEnergy(creep) {
                 return false;
             }
 
+            if(structure.structureType == STRUCTURE_LINK) {
+                var linkRole = creepUtils.getLinkRole(creep.room, structure);
+                if(linkRole == 'source' || linkRole == 'controller') {
+                    return false;
+                }
+            }
+
             return (structure.structureType == STRUCTURE_CONTAINER ||
-                structure.structureType == STRUCTURE_STORAGE) &&
+                structure.structureType == STRUCTURE_STORAGE ||
+                structure.structureType == STRUCTURE_LINK) &&
                 creepUtils.isSafeTarget(creep, structure) &&
                 creepUtils.canReachBeforeDecay(creep, structure, 1);
         }
@@ -138,17 +147,32 @@ function findStorageTarget(creep) {
     });
 }
 
+function findTerminalTarget(creep) {
+    var targetEnergy = creep.room.memory.terminalEnergyTarget || TERMINAL_ENERGY_TARGET;
+    return creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
+        filter: function(structure) {
+            return structure.structureType == STRUCTURE_TERMINAL &&
+                structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0 &&
+                structure.store[RESOURCE_ENERGY] < targetEnergy &&
+                creepUtils.isSafeTarget(creep, structure) &&
+                creepUtils.canReachBeforeDecay(creep, structure, 1);
+        }
+    });
+}
+
 function findDeliveryTarget(creep) {
     if(creep.room.memory.defenseMode) {
         return findTowerFillTarget(creep) ||
             findSpawnFillTarget(creep) ||
             findControllerContainerTarget(creep) ||
+            findTerminalTarget(creep) ||
             findStorageTarget(creep);
     }
 
     return findSpawnFillTarget(creep) ||
         findTowerFillTarget(creep, TOWER_PEACE_REFILL_TARGET) ||
         findControllerContainerTarget(creep) ||
+        findTerminalTarget(creep) ||
         findStorageTarget(creep);
 }
 

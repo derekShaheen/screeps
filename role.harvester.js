@@ -137,6 +137,21 @@ function getSourceContainer(source) {
     return containers[0] || null;
 }
 
+function getSourceLink(source) {
+    var links = source.pos.findInRange(FIND_MY_STRUCTURES, 2, {
+        filter: function(structure) {
+            return structure.structureType == STRUCTURE_LINK &&
+                structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
+        }
+    });
+
+    links.sort(function(a, b) {
+        return a.pos.getRangeTo(source) - b.pos.getRangeTo(source);
+    });
+
+    return links[0] || null;
+}
+
 function sourceHasUsableContainer(creep, source) {
     var container = getSourceContainer(source);
     return container &&
@@ -236,8 +251,11 @@ function harvestToContainer(creep, source, container) {
         return false;
     }
 
+    var sourceLink = getSourceLink(source);
+
     if(creep.store.getFreeCapacity(RESOURCE_ENERGY) === 0 &&
-        container.store.getFreeCapacity(RESOURCE_ENERGY) === 0) {
+        container.store.getFreeCapacity(RESOURCE_ENERGY) === 0 &&
+        (!sourceLink || sourceLink.store.getFreeCapacity(RESOURCE_ENERGY) === 0)) {
         debug.log(
             'debugRoles',
             creep.name + ' source container is full; delivering instead of waiting at ' + formatPos(container.pos),
@@ -246,20 +264,24 @@ function harvestToContainer(creep, source, container) {
         return false;
     }
 
+    var canDepositToLink = sourceLink &&
+        creep.pos.inRangeTo(sourceLink, 1) &&
+        sourceLink.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
     var shouldDeposit = creep.store[RESOURCE_ENERGY] > 0 &&
         container.store.getFreeCapacity(RESOURCE_ENERGY) > 0 &&
         (creep.store.getFreeCapacity(RESOURCE_ENERGY) === 0 || source.energy === 0);
 
-    if(shouldDeposit) {
-        var transferResult = creep.transfer(container, RESOURCE_ENERGY);
+    if(shouldDeposit || canDepositToLink) {
+        var depositTarget = canDepositToLink ? sourceLink : container;
+        var transferResult = creep.transfer(depositTarget, RESOURCE_ENERGY);
         if(transferResult == ERR_NOT_IN_RANGE) {
-            creepUtils.moveTo(creep, container, '#ffaa00', 'dropoff', 'move:containerDropoff');
+            creepUtils.moveTo(creep, depositTarget, '#ffaa00', 'dropoff', 'move:containerDropoff');
             return true;
         }
 
         if(transferResult == OK) {
             creepUtils.announceIntent(creep, 'action:containerFill', 'fill box');
-            debug.log('debugRoles', creep.name + ' filled source container at ' + formatPos(container.pos), 3);
+            debug.log('debugRoles', creep.name + ' filled source ' + depositTarget.structureType + ' at ' + formatPos(depositTarget.pos), 3);
             return true;
         }
     }

@@ -6,12 +6,18 @@ KEY_RAMPART_STRUCTURES[STRUCTURE_EXTENSION] = true;
 KEY_RAMPART_STRUCTURES[STRUCTURE_TOWER] = true;
 KEY_RAMPART_STRUCTURES[STRUCTURE_STORAGE] = true;
 KEY_RAMPART_STRUCTURES[STRUCTURE_TERMINAL] = true;
+KEY_RAMPART_STRUCTURES[STRUCTURE_LINK] = true;
+KEY_RAMPART_STRUCTURES[STRUCTURE_LAB] = true;
 
 var BUILDING_STRUCTURES = {};
 BUILDING_STRUCTURES[STRUCTURE_EXTENSION] = true;
 BUILDING_STRUCTURES[STRUCTURE_TOWER] = true;
 BUILDING_STRUCTURES[STRUCTURE_STORAGE] = true;
 BUILDING_STRUCTURES[STRUCTURE_CONTAINER] = true;
+BUILDING_STRUCTURES[STRUCTURE_LINK] = true;
+BUILDING_STRUCTURES[STRUCTURE_EXTRACTOR] = true;
+BUILDING_STRUCTURES[STRUCTURE_LAB] = true;
+BUILDING_STRUCTURES[STRUCTURE_TERMINAL] = true;
 
 function formatPos(pos) {
     return pos.roomName + ':' + pos.x + ',' + pos.y;
@@ -172,6 +178,11 @@ function canCreateSite(room, pos, structureType) {
         return false;
     }
 
+    if(structureType == STRUCTURE_EXTRACTOR) {
+        return !hasStructure(pos, STRUCTURE_EXTRACTOR) &&
+            pos.lookFor(LOOK_MINERALS).length > 0;
+    }
+
     if(structureType == STRUCTURE_RAMPART) {
         return !hasStructure(pos, STRUCTURE_RAMPART);
     }
@@ -303,6 +314,107 @@ function planCoreStructure(room, structureType, minRange, maxRange, remaining) {
         debug.log(
             'debugConstruction',
             room.name + ' planned ' + placed + ' ' + structureType + ' site(s)',
+            1
+        );
+    }
+
+    return placed;
+}
+
+function getStructures(room, structureType) {
+    return room.find(FIND_STRUCTURES, {
+        filter: function(structure) {
+            return structure.structureType == structureType;
+        }
+    });
+}
+
+function getStorage(room) {
+    var storage = getStructures(room, STRUCTURE_STORAGE);
+    return storage[0] || null;
+}
+
+function getTerminal(room) {
+    var terminals = getStructures(room, STRUCTURE_TERMINAL);
+    return terminals[0] || null;
+}
+
+function getAnchorStructure(room) {
+    return getStorage(room) || getPrimarySpawn(room);
+}
+
+function getCandidateRingAroundPos(room, anchorPos, minRange, maxRange) {
+    var candidates = [];
+    for(var dx = -maxRange; dx <= maxRange; dx++) {
+        for(var dy = -maxRange; dy <= maxRange; dy++) {
+            var range = Math.max(Math.abs(dx), Math.abs(dy));
+            if(range < minRange || range > maxRange) {
+                continue;
+            }
+
+            var x = anchorPos.x + dx;
+            var y = anchorPos.y + dy;
+            if(x <= 1 || x >= 48 || y <= 1 || y >= 48) {
+                continue;
+            }
+
+            var pos = new RoomPosition(x, y, room.name);
+            if(isCoreBuildTile(room, pos)) {
+                candidates.push(pos);
+            }
+        }
+    }
+
+    return candidates;
+}
+
+function sortByAnchor(room, candidates, anchorPos, structureType) {
+    var spawn = getPrimarySpawn(room);
+    candidates.sort(function(a, b) {
+        var aRoadShape = structureType == STRUCTURE_LAB ? (a.x + a.y) % 2 : 0;
+        var bRoadShape = structureType == STRUCTURE_LAB ? (b.x + b.y) % 2 : 0;
+        var aScore = a.getRangeTo(anchorPos) + aRoadShape;
+        var bScore = b.getRangeTo(anchorPos) + bRoadShape;
+
+        if(spawn) {
+            aScore += a.getRangeTo(spawn) * 0.15;
+            bScore += b.getRangeTo(spawn) * 0.15;
+        }
+
+        if(room.controller) {
+            aScore += a.getRangeTo(room.controller) * 0.1;
+            bScore += b.getRangeTo(room.controller) * 0.1;
+        }
+
+        return aScore - bScore;
+    });
+}
+
+function planAnchoredStructure(room, structureType, anchorPos, minRange, maxRange, remaining) {
+    if(remaining <= 0 || !needsMore(room, structureType) || !anchorPos) {
+        return 0;
+    }
+
+    var placed = 0;
+    var needed = getAllowedCount(room, structureType) - countStructuresAndSites(room, structureType);
+    var candidates = getCandidateRingAroundPos(room, anchorPos, minRange, maxRange);
+    sortByAnchor(room, candidates, anchorPos, structureType);
+
+    for(var i = 0; i < candidates.length && placed < remaining && placed < needed; i++) {
+        var result = createSite(room, candidates[i], structureType);
+        if(result == OK) {
+            placed++;
+        }
+
+        if(result == ERR_FULL) {
+            break;
+        }
+    }
+
+    if(placed > 0) {
+        debug.log(
+            'debugConstruction',
+            room.name + ' planned ' + placed + ' ' + structureType + ' anchored site(s)',
             1
         );
     }
@@ -556,6 +668,158 @@ function planRoads(room, remaining) {
     return placed;
 }
 
+function getSourceContainer(source) {
+    var containers = source.pos.findInRange(FIND_STRUCTURES, 1, {
+        filter: function(structure) {
+            return structure.structureType == STRUCTURE_CONTAINER;
+        }
+    });
+
+    return containers[0] || null;
+}
+
+function hasLinkNear(pos, range) {
+    return hasNearbyStructureOrSite(pos, STRUCTURE_LINK, range);
+}
+
+function getLinkCandidatesNearSource(room, source) {
+    var candidates = [];
+    var container = getSourceContainer(source);
+
+    for(var range = 1; range <= 2; range++) {
+        for(var dx = -range; dx <= range; dx++) {
+            for(var dy = -range; dy <= range; dy++) {
+                if(Math.max(Math.abs(dx), Math.abs(dy)) != range) {
+                    continue;
+                }
+
+                var x = source.pos.x + dx;
+                var y = source.pos.y + dy;
+                if(x <= 1 || x >= 48 || y <= 1 || y >= 48) {
+                    continue;
+                }
+
+                var pos = new RoomPosition(x, y, room.name);
+                if(isCoreBuildTile(room, pos)) {
+                    candidates.push(pos);
+                }
+            }
+        }
+    }
+
+    candidates.sort(function(a, b) {
+        var aScore = a.getRangeTo(source) * 3;
+        var bScore = b.getRangeTo(source) * 3;
+
+        if(container) {
+            aScore += a.getRangeTo(container) * 2;
+            bScore += b.getRangeTo(container) * 2;
+        }
+
+        if(room.controller) {
+            aScore += a.getRangeTo(room.controller) * 0.1;
+            bScore += b.getRangeTo(room.controller) * 0.1;
+        }
+
+        return aScore - bScore;
+    });
+
+    return candidates;
+}
+
+function planControllerLink(room, remaining) {
+    if(remaining <= 0 ||
+        !needsMore(room, STRUCTURE_LINK) ||
+        !room.controller ||
+        hasLinkNear(room.controller.pos, 4)) {
+        return 0;
+    }
+
+    return planAnchoredStructure(room, STRUCTURE_LINK, room.controller.pos, 2, 4, Math.min(remaining, 1));
+}
+
+function planSourceLinks(room, remaining) {
+    if(remaining <= 0 || !needsMore(room, STRUCTURE_LINK)) {
+        return 0;
+    }
+
+    var placed = 0;
+    var sources = room.find(FIND_SOURCES);
+    sources.sort(function(a, b) {
+        var aContainer = getSourceContainer(a) ? 0 : 4;
+        var bContainer = getSourceContainer(b) ? 0 : 4;
+        return aContainer - bContainer || a.pos.getRangeTo(room.controller || a.pos) - b.pos.getRangeTo(room.controller || b.pos);
+    });
+
+    for(var i = 0; i < sources.length && placed < remaining && needsMore(room, STRUCTURE_LINK); i++) {
+        if(hasLinkNear(sources[i].pos, 2)) {
+            continue;
+        }
+
+        var candidates = getLinkCandidatesNearSource(room, sources[i]);
+        for(var j = 0; j < candidates.length && placed < remaining && needsMore(room, STRUCTURE_LINK); j++) {
+            var result = createSite(room, candidates[j], STRUCTURE_LINK);
+            if(result == OK) {
+                placed++;
+                break;
+            }
+
+            if(result == ERR_FULL) {
+                return placed;
+            }
+        }
+    }
+
+    if(placed > 0) {
+        debug.log('debugConstruction', room.name + ' planned ' + placed + ' source link site(s)', 1);
+    }
+
+    return placed;
+}
+
+function planLinks(room, remaining) {
+    if(remaining <= 0 || !needsMore(room, STRUCTURE_LINK)) {
+        return 0;
+    }
+
+    var placed = planControllerLink(room, remaining);
+    if(placed < remaining) {
+        placed += planSourceLinks(room, remaining - placed);
+    }
+
+    return placed;
+}
+
+function planExtractor(room, remaining) {
+    if(remaining <= 0 || !needsMore(room, STRUCTURE_EXTRACTOR)) {
+        return 0;
+    }
+
+    var minerals = room.find(FIND_MINERALS);
+    if(!minerals.length) {
+        return 0;
+    }
+
+    var result = createSite(room, minerals[0].pos, STRUCTURE_EXTRACTOR);
+    if(result == OK) {
+        debug.log('debugConstruction', room.name + ' planned extractor at ' + formatPos(minerals[0].pos), 1);
+        return 1;
+    }
+
+    return 0;
+}
+
+function planTerminal(room, remaining) {
+    var anchor = getAnchorStructure(room);
+    return anchor ? planAnchoredStructure(room, STRUCTURE_TERMINAL, anchor.pos, 2, 4, remaining) : 0;
+}
+
+function planLabs(room, remaining) {
+    var terminal = getTerminal(room);
+    var anchor = terminal || getStorage(room) || getPrimarySpawn(room);
+    return anchor ? planAnchoredStructure(room, STRUCTURE_LAB, anchor.pos, 2, 5, remaining) : 0;
+}
+
 function planPriorityTowers(room, settings, totalBudget) {
     if(settings.autoTowers === false ||
         totalBudget <= 0 ||
@@ -641,6 +905,58 @@ function countInfrastructureConstructionSites(room) {
     });
 }
 
+function getStructurePlanStatus(room, structureType) {
+    return countStructuresAndSites(room, structureType) + '/' + getAllowedCount(room, structureType);
+}
+
+function logInfrastructureIdle(room, settings) {
+    var level = room.controller ? room.controller.level : '?';
+    var parts = [];
+
+    if(settings.autoExtensions !== false) {
+        parts.push('extensions ' + getStructurePlanStatus(room, STRUCTURE_EXTENSION));
+    }
+
+    if(settings.autoTowers !== false) {
+        parts.push('towers ' + getStructurePlanStatus(room, STRUCTURE_TOWER));
+    }
+
+    if(settings.autoStorage !== false) {
+        parts.push('storage ' + getStructurePlanStatus(room, STRUCTURE_STORAGE));
+    }
+
+    if(settings.autoContainers !== false) {
+        parts.push('containers ' + getStructurePlanStatus(room, STRUCTURE_CONTAINER));
+    }
+
+    if(settings.autoLinks !== false) {
+        parts.push('links ' + getStructurePlanStatus(room, STRUCTURE_LINK));
+    }
+
+    if(settings.autoExtractor !== false) {
+        parts.push('extractor ' + getStructurePlanStatus(room, STRUCTURE_EXTRACTOR));
+    }
+
+    if(settings.autoTerminal !== false) {
+        parts.push('terminal ' + getStructurePlanStatus(room, STRUCTURE_TERMINAL));
+    }
+
+    if(settings.autoLabs !== false) {
+        parts.push('labs ' + getStructurePlanStatus(room, STRUCTURE_LAB));
+    }
+
+    if(settings.autoRoads !== false) {
+        parts.push('roads checked');
+    }
+
+    debug.log(
+        'debugConstruction',
+        room.name + ' infrastructure planner found no eligible sites at RCL ' +
+            level + ': ' + parts.join(', '),
+        20
+    );
+}
+
 function planInfrastructure(room, settings, totalBudget) {
     var maxSites = settings.maxInfrastructureSites || 12;
     var maxNewSites = settings.maxNewInfrastructureSitesPerTick || 4;
@@ -667,20 +983,39 @@ function planInfrastructure(room, settings, totalBudget) {
         placed += planCoreStructure(room, STRUCTURE_TOWER, 2, 4, remaining - placed);
     }
 
+    if(settings.autoStorage !== false && placed < remaining) {
+        placed += planCoreStructure(room, STRUCTURE_STORAGE, 2, 4, remaining - placed);
+    }
+
     if(settings.autoContainers !== false && placed < remaining) {
         placed += planContainers(room, remaining - placed);
+    }
+
+    if(settings.autoLinks !== false && placed < remaining) {
+        placed += planLinks(room, remaining - placed);
+    }
+
+    if(settings.autoExtractor !== false && placed < remaining) {
+        placed += planExtractor(room, remaining - placed);
+    }
+
+    if(settings.autoTerminal !== false && placed < remaining) {
+        placed += planTerminal(room, remaining - placed);
+    }
+
+    if(settings.autoLabs !== false && placed < remaining) {
+        placed += planLabs(room, remaining - placed);
     }
 
     if(settings.autoRoads !== false && placed < remaining) {
         placed += planRoads(room, remaining - placed);
     }
 
-    if(settings.autoStorage !== false && placed < remaining) {
-        placed += planCoreStructure(room, STRUCTURE_STORAGE, 2, 4, remaining - placed);
-    }
-
     if(placed > 0) {
         debug.log('debugConstruction', room.name + ' placed ' + placed + ' infrastructure construction sites', 1);
+    }
+    else {
+        logInfrastructureIdle(room, settings);
     }
 
     return placed;

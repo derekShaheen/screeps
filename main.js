@@ -1,5 +1,7 @@
 var debug = require('utils.debug');
 var constructionManager = require('manager.construction');
+var labManager = require('manager.lab');
+var linkManager = require('manager.link');
 var spawnManager = require('manager.spawn');
 var towerManager = require('manager.tower');
 var uiManager = require('manager.ui');
@@ -7,6 +9,7 @@ var creepUtils = require('utils.creep');
 var roleHarvester = require('role.harvester');
 var roleBuilder = require('role.builder');
 var roleDefender = require('role.defender');
+var roleMineralHarvester = require('role.mineralHarvester');
 var roleTransporter = require('role.transporter');
 var roleUpgrader = require('role.upgrader');
 
@@ -16,6 +19,7 @@ var DEFAULT_ROOM_MEMORY = {
         transporter: 0,
         upgrader: 1,
         builder: 1,
+        mineralHarvester: 0,
         defender: 1
     },
     wallTargetHits: 1000,
@@ -26,6 +30,10 @@ var DEFAULT_ROOM_MEMORY = {
         autoStorage: true,
         autoContainers: true,
         autoRoads: true,
+        autoLinks: true,
+        autoExtractor: true,
+        autoTerminal: true,
+        autoLabs: true,
         autoRamparts: true,
         autoExitWalls: true,
         autoWallTargetHits: true,
@@ -122,6 +130,11 @@ function runCreep(creep) {
         return;
     }
 
+    if(creep.memory.role == 'mineralHarvester') {
+        roleMineralHarvester.run(creep);
+        return;
+    }
+
     debug.log('debugRoles', creep.name + ' has unknown role ' + creep.memory.role, 5);
 }
 
@@ -135,6 +148,14 @@ module.exports.loop = function () {
 
     for(var towerRoomName in Game.rooms) {
         towerManager.run(Game.rooms[towerRoomName]);
+    }
+
+    for(var linkRoomName in Game.rooms) {
+        linkManager.run(Game.rooms[linkRoomName]);
+    }
+
+    for(var labRoomName in Game.rooms) {
+        labManager.run(Game.rooms[labRoomName]);
     }
 
     for(var constructionRoomName in Game.rooms) {

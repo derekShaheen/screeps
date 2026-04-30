@@ -560,6 +560,18 @@ function getAvailableStoredEnergy(creep, target) {
     return Math.max(0, target.store[RESOURCE_ENERGY] - getReservedEnergy(creep.room, target.id, creep.name));
 }
 
+function getLinkRole(room, link) {
+    if(!room || !room.memory || !room.memory.linkRoles || !link) {
+        return null;
+    }
+
+    return room.memory.linkRoles[link.id] || null;
+}
+
+function isSourceLink(room, link) {
+    return getLinkRole(room, link) == 'source';
+}
+
 function reserveEnergyTarget(creep, target) {
     if(!target ||
         !target.id ||
@@ -1103,10 +1115,18 @@ function findStoredEnergy(creep) {
                 return false;
             }
 
+            if(structure.structureType == STRUCTURE_LINK) {
+                var linkRole = getLinkRole(creep.room, structure);
+                if(linkRole == 'source' || (linkRole == 'controller' && creep.memory.role != 'upgrader')) {
+                    return false;
+                }
+            }
+
             return isSafeTarget(creep, structure) &&
                 canReachBeforeDecay(creep, structure, 1) &&
                 (structure.structureType == STRUCTURE_CONTAINER ||
-                structure.structureType == STRUCTURE_STORAGE);
+                structure.structureType == STRUCTURE_STORAGE ||
+                structure.structureType == STRUCTURE_LINK);
         }
     });
 }
@@ -1264,6 +1284,8 @@ module.exports = {
     canReachBeforeDecay: canReachBeforeDecay,
     collectEnergy: collectEnergy,
     getAvailableStoredEnergy: getAvailableStoredEnergy,
+    getLinkRole: getLinkRole,
+    isSourceLink: isSourceLink,
     isSafeTarget: isSafeTarget,
     moveTo: moveTo,
     releaseEnergyReservation: releaseEnergyReservation,

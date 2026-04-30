@@ -5,10 +5,11 @@ var BASE_TARGETS = {
     transporter: 0,
     upgrader: 1,
     builder: 1,
+    mineralHarvester: 0,
     defender: 1
 };
 
-var ROLE_PRIORITY = ['harvester', 'transporter', 'upgrader', 'builder', 'defender'];
+var ROLE_PRIORITY = ['harvester', 'transporter', 'upgrader', 'builder', 'defender', 'mineralHarvester'];
 
 var BODIES = {
     harvester: [
@@ -20,8 +21,8 @@ var BODIES = {
     transporter: [
         [CARRY, CARRY, MOVE],
         [CARRY, CARRY, CARRY, MOVE, MOVE],
-        [CARRY, CARRY, CARRY, CARRY, MOVE, MOVE],
-        [CARRY, CARRY, CARRY, CARRY, CARRY, MOVE, MOVE]
+        [CARRY, CARRY, CARRY, MOVE, MOVE, MOVE],
+        [CARRY, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE]
     ],
     upgrader: [
         [WORK, CARRY, MOVE],
@@ -34,6 +35,12 @@ var BODIES = {
         [WORK, CARRY, CARRY, MOVE],
         [WORK, WORK, CARRY, CARRY, MOVE, MOVE],
         [WORK, WORK, CARRY, CARRY, CARRY, MOVE, MOVE]
+    ],
+    mineralHarvester: [
+        [WORK, CARRY, MOVE],
+        [WORK, WORK, CARRY, MOVE, MOVE],
+        [WORK, WORK, WORK, CARRY, CARRY, MOVE, MOVE],
+        [WORK, WORK, WORK, WORK, CARRY, CARRY, MOVE, MOVE]
     ],
     defender: [
         [ATTACK, ATTACK, MOVE],
@@ -59,6 +66,7 @@ var BODY_GROWTH = {
     transporter: [CARRY, CARRY, MOVE],
     upgrader: [WORK, WORK, CARRY, MOVE],
     builder: [WORK, CARRY, CARRY, MOVE],
+    mineralHarvester: [WORK, WORK, CARRY, MOVE],
     defender: [TOUGH, ATTACK, MOVE],
     defenderHealer: [TOUGH, HEAL, MOVE]
 };
@@ -129,20 +137,83 @@ function growBody(baseBody, growthParts, energyAvailable) {
     return sortBody(body);
 }
 
-function chooseBody(room, role, bodyType) {
+function chooseBodyForEnergy(role, bodyType, energyAvailable) {
     var selectedType = bodyType || role;
     var options = BODIES[selectedType] || BODIES[role] || BODIES.harvester;
-    var configuredBody = getBestConfiguredBody(options, room.energyAvailable);
+    var configuredBody = getBestConfiguredBody(options, energyAvailable);
     if(!configuredBody) {
         return null;
     }
 
     var topConfiguredBody = options[options.length - 1];
-    if(bodyCost(topConfiguredBody) > room.energyAvailable) {
-        return configuredBody;
+    if(bodyCost(topConfiguredBody) > energyAvailable) {
+        return sortBody(cloneBody(configuredBody));
     }
 
-    return growBody(configuredBody, BODY_GROWTH[selectedType] || BODY_GROWTH[role], room.energyAvailable);
+    return growBody(configuredBody, BODY_GROWTH[selectedType] || BODY_GROWTH[role], energyAvailable);
+}
+
+function chooseBody(room, role, bodyType, energyBudget) {
+    var budget = energyBudget === undefined ? room.energyAvailable : energyBudget;
+    return chooseBodyForEnergy(role, bodyType, budget);
+}
+
+function shouldUseRecoveryBody(room, role, counts, targets) {
+    if(role == 'harvester' && counts.harvester === 0) {
+        return true;
+    }
+
+    if(role == 'transporter' &&
+        counts.transporter === 0 &&
+        targets.transporter > 0 &&
+        countSourceContainers(room) > 0) {
+        return true;
+    }
+
+    if(role == 'defender' &&
+        counts.defender === 0 &&
+        (room.memory.defenseMode || getHostileThreatCount(room) > 0)) {
+        return true;
+    }
+
+    return false;
+}
+
+function getSpawnBodyDecision(room, role, bodyType, counts, targets) {
+    var recoverySpawn = shouldUseRecoveryBody(room, role, counts, targets);
+    var desiredBody = chooseBody(room, role, bodyType, room.energyCapacityAvailable);
+    var desiredCost = desiredBody ? bodyCost(desiredBody) : 0;
+
+    if(recoverySpawn) {
+        var recoveryBody = chooseBody(room, role, bodyType, room.energyAvailable);
+        return {
+            body: recoveryBody,
+            desiredCost: desiredCost,
+            recoverySpawn: true
+        };
+    }
+
+    if(!desiredBody) {
+        return {
+            body: null,
+            desiredCost: desiredCost,
+            recoverySpawn: false
+        };
+    }
+
+    if(room.energyAvailable < desiredCost) {
+        return {
+            body: null,
+            desiredCost: desiredCost,
+            recoverySpawn: false
+        };
+    }
+
+    return {
+        body: desiredBody,
+        desiredCost: desiredCost,
+        recoverySpawn: false
+    };
 }
 
 function getDefenderType(creep) {
@@ -163,6 +234,7 @@ function countRoles(room) {
         transporter: 0,
         upgrader: 0,
         builder: 0,
+        mineralHarvester: 0,
         defender: 0,
         defenderAttackers: 0,
         defenderHealers: 0
@@ -197,6 +269,7 @@ function getMinimumTargets(room) {
         transporter: memoryTargets.transporter === undefined ? BASE_TARGETS.transporter : memoryTargets.transporter,
         upgrader: memoryTargets.upgrader === undefined ? BASE_TARGETS.upgrader : memoryTargets.upgrader,
         builder: memoryTargets.builder === undefined ? BASE_TARGETS.builder : memoryTargets.builder,
+        mineralHarvester: memoryTargets.mineralHarvester === undefined ? BASE_TARGETS.mineralHarvester : memoryTargets.mineralHarvester,
         defender: memoryTargets.defender === undefined ? BASE_TARGETS.defender : memoryTargets.defender
     };
 }
@@ -242,6 +315,32 @@ function hasStoredEnergy(room) {
     });
 
     return stores.length > 0;
+}
+
+function hasMineralStorage(room) {
+    var structures = room.find(FIND_MY_STRUCTURES, {
+        filter: function(structure) {
+            return (structure.structureType == STRUCTURE_TERMINAL ||
+                structure.structureType == STRUCTURE_STORAGE) &&
+                structure.store.getFreeCapacity() > 0;
+        }
+    });
+
+    return structures.length > 0;
+}
+
+function hasExtractor(room) {
+    return countStructures(room, STRUCTURE_EXTRACTOR) > 0;
+}
+
+function hasAvailableMineral(room) {
+    var minerals = room.find(FIND_MINERALS, {
+        filter: function(mineral) {
+            return mineral.mineralAmount > 0;
+        }
+    });
+
+    return minerals.length > 0;
 }
 
 function countDefenseRepairTargets(room) {
@@ -328,6 +427,10 @@ function scaleTransporters(room, targets) {
         targets.transporter = Math.max(targets.transporter, 2);
     }
 
+    if(sourceContainers >= 2 && room.energyCapacityAvailable >= 800) {
+        targets.transporter = Math.max(targets.transporter, 3);
+    }
+
     if(hasStorage && room.energyCapacityAvailable >= 800) {
         targets.transporter = Math.max(targets.transporter, 3);
     }
@@ -403,6 +506,19 @@ function scaleUpgraders(room, counts, targets, constructionSites) {
     }
 }
 
+function scaleMineralHarvesters(room, targets) {
+    if(!room.controller ||
+        room.controller.level < 6 ||
+        !hasExtractor(room) ||
+        !hasMineralStorage(room) ||
+        !hasAvailableMineral(room)) {
+        targets.mineralHarvester = 0;
+        return;
+    }
+
+    targets.mineralHarvester = Math.max(targets.mineralHarvester, 1);
+}
+
 function scaleDefenders(room, targets) {
     var threatCount = getHostileThreatCount(room);
     var canUseDefenderSquad = room.energyCapacityAvailable >= bodyCost(MIN_DEFENDER_HEALER_BODY);
@@ -444,6 +560,7 @@ function getTargets(room, counts) {
     scaleTransporters(room, targets);
     scaleBuilders(room, targets, constructionSites);
     scaleUpgraders(room, counts, targets, constructionSites);
+    scaleMineralHarvesters(room, targets);
     scaleDefenders(room, targets);
 
     return targets;
@@ -469,6 +586,7 @@ function formatTargets(targets) {
         ' T ' + targets.transporter +
         ' B ' + targets.builder +
         ' U ' + targets.upgrader +
+        ' M ' + targets.mineralHarvester +
         ' D ' + targets.defender;
 }
 
@@ -509,12 +627,16 @@ function getBodyType(role, defenderType) {
 
 function spawnRole(spawn, role, counts, targets) {
     var defenderType = role == 'defender' ? getDefenderSpawnType(spawn.room, counts, targets) : null;
-    var body = chooseBody(spawn.room, role, getBodyType(role, defenderType));
+    var bodyType = getBodyType(role, defenderType);
+    var bodyDecision = getSpawnBodyDecision(spawn.room, role, bodyType, counts, targets);
+    var body = bodyDecision.body;
     if(!body) {
+        var desiredCost = bodyDecision.desiredCost || spawn.room.energyCapacityAvailable;
         debug.log(
             'debugSpawn',
             spawn.name + ' waiting for energy to spawn ' +
-                (defenderType ? defenderType + ' ' : '') + role,
+                (defenderType ? defenderType + ' ' : '') + role +
+                ' (' + spawn.room.energyAvailable + '/' + desiredCost + ')',
             5
         );
         return;
@@ -539,10 +661,13 @@ function spawnRole(spawn, role, counts, targets) {
             spawn.name + ' spawning ' + name +
                 (defenderType ? ' ' + defenderType : '') +
                 ' (' + body.join(',') + ') ' +
+                'energy ' + bodyCost(body) + '/' + spawn.room.energyCapacityAvailable +
+                (bodyDecision.recoverySpawn ? ' recovery ' : ' ') +
                 'counts H ' + counts.harvester + '/' + targets.harvester +
                 ' T ' + counts.transporter + '/' + targets.transporter +
                 ' B ' + counts.builder + '/' + targets.builder +
                 ' U ' + counts.upgrader + '/' + targets.upgrader +
+                ' M ' + counts.mineralHarvester + '/' + targets.mineralHarvester +
                 ' D ' + counts.defender + '/' + targets.defender +
                 ' A ' + counts.defenderAttackers +
                 ' He ' + counts.defenderHealers,
