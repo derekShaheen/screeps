@@ -255,26 +255,7 @@ function isReservedSpawnRoadOffset(dx, dy) {
         return false;
     }
 
-    var ax = Math.abs(dx);
-    var ay = Math.abs(dy);
-
-    if(ax <= 1 && ay <= 1) {
-        return true;
-    }
-
-    if(ay == 1 && ax <= 2) {
-        return true;
-    }
-
-    if(ax == 2 && ay <= 1) {
-        return true;
-    }
-
-    if(ax <= 1 && ay == 2) {
-        return true;
-    }
-
-    return false;
+    return Math.abs(dx) <= 1 && Math.abs(dy) <= 1;
 }
 
 function isEarlySpawnRoadOffset(dx, dy) {
@@ -805,8 +786,8 @@ function planRoadPath(room, fromPos, toPos, range, remaining) {
 
 function getSpawnRoadLoopPositions(room, spawn) {
     var positions = [];
-    for(var dx = -2; dx <= 2; dx++) {
-        for(var dy = -2; dy <= 2; dy++) {
+    for(var dx = -1; dx <= 1; dx++) {
+        for(var dy = -1; dy <= 1; dy++) {
             if(!isReservedSpawnRoadOffset(dx, dy)) {
                 continue;
             }
@@ -891,27 +872,24 @@ function getNearestSpawn(spawns, pos) {
     return nearest;
 }
 
+function isMajorBaseRoadTarget(structureType) {
+    return structureType == STRUCTURE_STORAGE ||
+        structureType == STRUCTURE_TERMINAL ||
+        structureType == STRUCTURE_TOWER ||
+        structureType == STRUCTURE_LINK;
+}
+
 function getBaseRoadTargets(room) {
     var targets = [];
     var structures = room.find(FIND_MY_STRUCTURES, {
         filter: function(structure) {
-            return structure.structureType == STRUCTURE_EXTENSION ||
-                structure.structureType == STRUCTURE_TOWER ||
-                structure.structureType == STRUCTURE_STORAGE ||
-                structure.structureType == STRUCTURE_TERMINAL ||
-                structure.structureType == STRUCTURE_LINK ||
-                structure.structureType == STRUCTURE_LAB;
+            return isMajorBaseRoadTarget(structure.structureType);
         }
     });
 
     var sites = room.find(FIND_CONSTRUCTION_SITES, {
         filter: function(site) {
-            return site.structureType == STRUCTURE_EXTENSION ||
-                site.structureType == STRUCTURE_TOWER ||
-                site.structureType == STRUCTURE_STORAGE ||
-                site.structureType == STRUCTURE_TERMINAL ||
-                site.structureType == STRUCTURE_LINK ||
-                site.structureType == STRUCTURE_LAB;
+            return site.my !== false && isMajorBaseRoadTarget(site.structureType);
         }
     });
 
