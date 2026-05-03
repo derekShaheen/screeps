@@ -211,6 +211,78 @@ function getActiveRemoteRooms(room) {
     return rooms.slice(0, settings.maxRooms);
 }
 
+function getRoomReportLine(roomName, remoteName, remoteMemory) {
+    var status = remoteMemory.status || 'unknown';
+    var visible = Game.rooms[remoteName] ? 'visible' : 'unseen';
+    var sources = remoteMemory.sourceIds ? remoteMemory.sourceIds.length : '?';
+    var distance = remoteMemory.distance === undefined ? '?' : remoteMemory.distance;
+    var unsafe = remoteMemory.unsafeUntil && remoteMemory.unsafeUntil > Game.time ?
+        ' cooldown ' + (remoteMemory.unsafeUntil - Game.time) :
+        '';
+    var reason = remoteMemory.reason ? ' ' + remoteMemory.reason : '';
+    var enabled = remoteMemory.enabled === false ? ' disabled' : '';
+
+    return roomName + ' -> ' + remoteName +
+        ' status=' + status +
+        ' ' + visible +
+        ' dist=' + distance +
+        ' sources=' + sources +
+        unsafe +
+        reason +
+        enabled;
+}
+
+function getReport(homeRoomName) {
+    var lines = [];
+    var roomNames = [];
+
+    if(homeRoomName) {
+        roomNames.push(homeRoomName);
+    }
+    else {
+        for(var roomName in Game.rooms) {
+            if(Game.rooms[roomName].controller && Game.rooms[roomName].controller.my) {
+                roomNames.push(roomName);
+            }
+        }
+    }
+
+    roomNames.sort();
+    for(var i = 0; i < roomNames.length; i++) {
+        var room = Game.rooms[roomNames[i]];
+        var memory = Memory.rooms && Memory.rooms[roomNames[i]] ? Memory.rooms[roomNames[i]] : null;
+        if(!room && !memory) {
+            lines.push(roomNames[i] + ' has no visible room or memory');
+            continue;
+        }
+
+        var settings = room ? updateRemoteMemory(room) : memory.remote;
+        if(!settings || !settings.rooms) {
+            lines.push(roomNames[i] + ' has no remote discovery memory');
+            continue;
+        }
+
+        var remoteNames = Object.keys(settings.rooms).sort();
+        lines.push(
+            '[' + roomNames[i] + '] remote enabled=' + (settings.enabled !== false) +
+                ' maxRooms=' + settings.maxRooms +
+                ' minHomeRcl=' + settings.minHomeRcl +
+                ' known=' + remoteNames.length
+        );
+
+        if(!remoteNames.length) {
+            lines.push(roomNames[i] + ' has not discovered adjacent rooms yet');
+            continue;
+        }
+
+        for(var r = 0; r < remoteNames.length; r++) {
+            lines.push(getRoomReportLine(roomNames[i], remoteNames[r], settings.rooms[remoteNames[r]]));
+        }
+    }
+
+    return lines.join('\n');
+}
+
 function countRemoteCreeps(homeRoomName, role, remoteRoomName, sourceId) {
     var count = 0;
     for(var name in Game.creeps) {
@@ -524,6 +596,7 @@ module.exports = {
     deliverHome: deliverHome,
     findRemoteEnergyTarget: findRemoteEnergyTarget,
     getSettings: getSettings,
+    getReport: getReport,
     getSpawnRequest: getSpawnRequest,
     hasHostileTower: hasHostileTower,
     hasThreats: hasThreats,

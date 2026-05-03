@@ -180,8 +180,15 @@ function runCreep(creep) {
     debug.log('debugRoles', creep.name + ' has unknown role ' + creep.memory.role, 5);
 }
 
+function initializeConsoleHelpers() {
+    global.remoteReport = function(roomName) {
+        return remoteManager.getReport(roomName);
+    };
+}
+
 module.exports.loop = function () {
     debug.initialize();
+    initializeConsoleHelpers();
     cleanupCreepMemory();
 
     for(var roomName in Game.rooms) {
