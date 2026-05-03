@@ -2057,9 +2057,11 @@ function planDefense(room, settings, totalBudget) {
 
     var remaining = Math.min(siteBudget, maxDefenseSites - existingDefenseSites);
     var placed = 0;
+    var plannedSpawnAreaRamparts = false;
 
     if(settings.autoRamparts !== false) {
         removeObsoleteInnerRampartSites(room);
+        plannedSpawnAreaRamparts = !!defenseUtils.getSpawnAreaRampartPlan(room);
         placed += planSpawnAreaRamparts(room, remaining - placed);
     }
 
@@ -2067,7 +2069,7 @@ function planDefense(room, settings, totalBudget) {
         placed += planExitWalls(room, remaining - placed);
     }
 
-    if(placed === 0 && placed < remaining) {
+    if(placed === 0 && placed < remaining && !plannedSpawnAreaRamparts) {
         placed += planCorePerimeterDefense(room, remaining - placed);
     }
 
