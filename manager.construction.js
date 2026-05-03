@@ -2086,6 +2086,407 @@ function planDefense(room, settings, totalBudget) {
     return placed;
 }
 
+var PLANNER_VISUAL_COLORS = {};
+PLANNER_VISUAL_COLORS[STRUCTURE_EXTENSION] = '#ffe066';
+PLANNER_VISUAL_COLORS[STRUCTURE_TOWER] = '#ff6666';
+PLANNER_VISUAL_COLORS[STRUCTURE_CONTAINER] = '#c49a6c';
+PLANNER_VISUAL_COLORS[STRUCTURE_ROAD] = '#66ccff';
+PLANNER_VISUAL_COLORS[STRUCTURE_STORAGE] = '#ffffff';
+PLANNER_VISUAL_COLORS[STRUCTURE_LINK] = '#66ff99';
+PLANNER_VISUAL_COLORS[STRUCTURE_EXTRACTOR] = '#cc99ff';
+PLANNER_VISUAL_COLORS[STRUCTURE_TERMINAL] = '#ff99cc';
+PLANNER_VISUAL_COLORS[STRUCTURE_LAB] = '#99ccff';
+PLANNER_VISUAL_COLORS[STRUCTURE_RAMPART] = '#66ff66';
+PLANNER_VISUAL_COLORS[STRUCTURE_WALL] = '#999999';
+PLANNER_VISUAL_COLORS[STRUCTURE_SPAWN] = '#ffffff';
+
+var PLANNER_VISUAL_LABELS = {};
+PLANNER_VISUAL_LABELS[STRUCTURE_EXTENSION] = 'E';
+PLANNER_VISUAL_LABELS[STRUCTURE_TOWER] = 'T';
+PLANNER_VISUAL_LABELS[STRUCTURE_CONTAINER] = 'C';
+PLANNER_VISUAL_LABELS[STRUCTURE_ROAD] = 'r';
+PLANNER_VISUAL_LABELS[STRUCTURE_STORAGE] = 'S';
+PLANNER_VISUAL_LABELS[STRUCTURE_LINK] = 'L';
+PLANNER_VISUAL_LABELS[STRUCTURE_EXTRACTOR] = 'X';
+PLANNER_VISUAL_LABELS[STRUCTURE_TERMINAL] = 'M';
+PLANNER_VISUAL_LABELS[STRUCTURE_LAB] = 'B';
+PLANNER_VISUAL_LABELS[STRUCTURE_RAMPART] = 'R';
+PLANNER_VISUAL_LABELS[STRUCTURE_WALL] = 'W';
+PLANNER_VISUAL_LABELS[STRUCTURE_SPAWN] = 'P';
+
+function getPlannerVisualColor(structureType) {
+    return PLANNER_VISUAL_COLORS[structureType] || '#ffffff';
+}
+
+function getPlannerVisualLabel(structureType) {
+    return PLANNER_VISUAL_LABELS[structureType] || '?';
+}
+
+function drawPlannerLabel(room, pos, structureType, opacity) {
+    room.visual.text(getPlannerVisualLabel(structureType), pos.x, pos.y + 0.18, {
+        color: getPlannerVisualColor(structureType),
+        font: 0.45,
+        opacity: opacity || 0.85,
+        align: 'center'
+    });
+}
+
+function drawPlannerSlot(room, pos, structureType, opacity) {
+    room.visual.circle(pos, {
+        radius: structureType == STRUCTURE_ROAD ? 0.16 : 0.33,
+        fill: getPlannerVisualColor(structureType),
+        opacity: opacity || 0.18,
+        stroke: getPlannerVisualColor(structureType),
+        strokeWidth: 0.04
+    });
+
+    if(structureType != STRUCTURE_ROAD) {
+        drawPlannerLabel(room, pos, structureType, 0.9);
+    }
+}
+
+function drawAllocatedPlannerObject(room, pos, structureType, isSite) {
+    var color = getPlannerVisualColor(structureType);
+    room.visual.rect(pos.x - 0.42, pos.y - 0.42, 0.84, 0.84, {
+        fill: color,
+        opacity: isSite ? 0.08 : 0.04,
+        stroke: color,
+        strokeWidth: isSite ? 0.08 : 0.04,
+        lineStyle: isSite ? 'dashed' : 'solid'
+    });
+    drawPlannerLabel(room, pos, structureType, isSite ? 1 : 0.65);
+}
+
+function addPlannerVisualPosition(positions, seen, pos, structureType) {
+    var key = structureType + ':' + getPosKey(pos);
+    if(seen[key]) {
+        return;
+    }
+
+    seen[key] = true;
+    positions.push({
+        pos: pos,
+        structureType: structureType
+    });
+}
+
+function drawPlannerPath(room, positions, color) {
+    if(positions.length > 1) {
+        room.visual.poly(positions, {
+            stroke: color,
+            strokeWidth: 0.08,
+            opacity: 0.45,
+            lineStyle: 'dashed'
+        });
+    }
+
+    for(var i = 0; i < positions.length; i++) {
+        drawPlannerSlot(room, positions[i], STRUCTURE_ROAD, 0.12);
+    }
+}
+
+function getFutureCoreSlots(room, structureType, minRange, maxRange, limit) {
+    if(limit <= 0 || !needsMore(room, structureType)) {
+        return [];
+    }
+
+    var spawn = getPrimarySpawn(room);
+    if(!spawn) {
+        return [];
+    }
+
+    var missing = Math.min(limit, getAllowedCount(room, structureType) - countStructuresAndSites(room, structureType));
+    var candidates = getCandidateRing(room, spawn, minRange, maxRange);
+    var slots = [];
+    sortCoreCandidates(room, candidates, structureType);
+
+    for(var i = 0; i < candidates.length && slots.length < missing; i++) {
+        if(isReservedBaseRoadTile(room, candidates[i])) {
+            continue;
+        }
+
+        if(canCreateSite(room, candidates[i], structureType)) {
+            slots.push(candidates[i]);
+        }
+    }
+
+    return slots;
+}
+
+function getFutureAnchoredSlots(room, structureType, anchorPos, minRange, maxRange, limit) {
+    if(limit <= 0 || !anchorPos || !needsMore(room, structureType)) {
+        return [];
+    }
+
+    var missing = Math.min(limit, getAllowedCount(room, structureType) - countStructuresAndSites(room, structureType));
+    var candidates = getCandidateRingAroundPos(room, anchorPos, minRange, maxRange);
+    var slots = [];
+    sortByAnchor(room, candidates, anchorPos, structureType);
+
+    for(var i = 0; i < candidates.length && slots.length < missing; i++) {
+        if(isReservedBaseRoadTile(room, candidates[i])) {
+            continue;
+        }
+
+        if(canCreateSite(room, candidates[i], structureType)) {
+            slots.push(candidates[i]);
+        }
+    }
+
+    return slots;
+}
+
+function addFutureSlots(visualPositions, seen, slots, structureType, limitState) {
+    for(var i = 0; i < slots.length && limitState.count < limitState.limit; i++) {
+        addPlannerVisualPosition(visualPositions, seen, slots[i], structureType);
+        limitState.count++;
+    }
+}
+
+function getFirstCreateableSlot(room, slots, structureType) {
+    for(var i = 0; i < slots.length; i++) {
+        if(canCreateSite(room, slots[i], structureType)) {
+            return slots[i];
+        }
+    }
+
+    return null;
+}
+
+function drawAllocatedPlannerObjects(room) {
+    var structures = room.find(FIND_STRUCTURES, {
+        filter: function(structure) {
+            return !!BUILDING_STRUCTURES[structure.structureType] ||
+                structure.structureType == STRUCTURE_SPAWN ||
+                structure.structureType == STRUCTURE_ROAD ||
+                structure.structureType == STRUCTURE_RAMPART ||
+                structure.structureType == STRUCTURE_WALL;
+        }
+    });
+
+    for(var i = 0; i < structures.length; i++) {
+        drawAllocatedPlannerObject(room, structures[i].pos, structures[i].structureType, false);
+    }
+
+    var sites = room.find(FIND_CONSTRUCTION_SITES);
+    for(var j = 0; j < sites.length; j++) {
+        if(sites[j].my === false) {
+            continue;
+        }
+
+        drawAllocatedPlannerObject(room, sites[j].pos, sites[j].structureType, true);
+    }
+}
+
+function drawRoadPlannerVisuals(room, settings) {
+    if(settings.autoRoads === false) {
+        return;
+    }
+
+    var spawns = getSpawns(room);
+    if(!spawns.length) {
+        return;
+    }
+
+    var primary = spawns[0];
+    for(var i = 0; i < spawns.length; i++) {
+        drawPlannerPath(room, getSpawnRoadLoopPositions(room, spawns[i]), '#66ccff');
+    }
+
+    for(var s = 1; s < spawns.length; s++) {
+        drawPlannerPath(room, getPath(room, primary.pos, spawns[s].pos, 1), '#66ccff');
+    }
+
+    var baseTargets = getBaseRoadTargets(room);
+    for(var b = 0; b < baseTargets.length; b++) {
+        var nearestSpawn = getNearestSpawn(spawns, baseTargets[b].pos);
+        drawPlannerPath(room, getPath(room, nearestSpawn.pos, baseTargets[b].pos, 1), '#66ccff');
+    }
+
+    var sources = room.find(FIND_SOURCES);
+    for(var sourceIndex = 0; sourceIndex < sources.length; sourceIndex++) {
+        drawPlannerPath(room, getPath(room, primary.pos, sources[sourceIndex].pos, 1), '#66ccff');
+    }
+
+    if(room.controller) {
+        drawPlannerPath(room, getPath(room, primary.pos, room.controller.pos, 2), '#66ccff');
+    }
+}
+
+function drawRampartPlannerVisuals(room, settings) {
+    if(settings.autoRamparts === false) {
+        return;
+    }
+
+    var plan = defenseUtils.getSpawnAreaRampartPlan(room);
+    if(!plan) {
+        return;
+    }
+
+    for(var i = 0; i < plan.positions.length; i++) {
+        drawPlannerSlot(room, plan.positions[i], STRUCTURE_RAMPART, 0.13);
+    }
+}
+
+function drawFutureBuildingPlannerVisuals(room, settings) {
+    var visualPositions = [];
+    var seen = {};
+    var limitState = {
+        count: 0,
+        limit: typeof settings.debugPlannerVisualLimit == 'number' ? settings.debugPlannerVisualLimit : 120
+    };
+
+    if(settings.autoExtensions !== false) {
+        addFutureSlots(visualPositions, seen, getFutureCoreSlots(room, STRUCTURE_EXTENSION, 2, 5, limitState.limit), STRUCTURE_EXTENSION, limitState);
+    }
+
+    if(settings.autoTowers !== false) {
+        addFutureSlots(visualPositions, seen, getFutureCoreSlots(room, STRUCTURE_TOWER, 2, 4, limitState.limit), STRUCTURE_TOWER, limitState);
+    }
+
+    if(settings.autoStorage !== false) {
+        addFutureSlots(visualPositions, seen, getFutureCoreSlots(room, STRUCTURE_STORAGE, 2, 4, limitState.limit), STRUCTURE_STORAGE, limitState);
+    }
+
+    if(settings.autoContainers !== false && canPlanContainersNow(room, settings)) {
+        var sources = room.find(FIND_SOURCES);
+        for(var i = 0; i < sources.length && limitState.count < limitState.limit; i++) {
+            if(hasNearbyStructureOrSite(sources[i].pos, STRUCTURE_CONTAINER, 1)) {
+                continue;
+            }
+
+            var sourceSlots = getAdjacentBuildTiles(room, sources[i].pos);
+            sourceSlots.sort(function(a, b) {
+                var spawn = getPrimarySpawn(room);
+                var aScore = spawn ? a.getRangeTo(spawn) : 0;
+                var bScore = spawn ? b.getRangeTo(spawn) : 0;
+                return aScore - bScore;
+            });
+
+            var sourceContainerSlot = getFirstCreateableSlot(room, sourceSlots, STRUCTURE_CONTAINER);
+            if(sourceContainerSlot) {
+                addFutureSlots(visualPositions, seen, [sourceContainerSlot], STRUCTURE_CONTAINER, limitState);
+            }
+        }
+
+        if(room.controller && !hasNearbyStructureOrSite(room.controller.pos, STRUCTURE_CONTAINER, 3)) {
+            addFutureSlots(
+                visualPositions,
+                seen,
+                getFutureAnchoredSlots(room, STRUCTURE_CONTAINER, room.controller.pos, 2, 3, 1),
+                STRUCTURE_CONTAINER,
+                limitState
+            );
+        }
+    }
+
+    if(settings.autoLinks !== false && hasEarlyExtensionBatch(room, settings)) {
+        if(room.controller && !hasLinkNear(room.controller.pos, 4)) {
+            addFutureSlots(
+                visualPositions,
+                seen,
+                getFutureAnchoredSlots(room, STRUCTURE_LINK, room.controller.pos, 2, 4, 1),
+                STRUCTURE_LINK,
+                limitState
+            );
+        }
+
+        var linkSources = room.find(FIND_SOURCES);
+        for(var linkSourceIndex = 0; linkSourceIndex < linkSources.length && limitState.count < limitState.limit; linkSourceIndex++) {
+            if(hasLinkNear(linkSources[linkSourceIndex].pos, 2)) {
+                continue;
+            }
+
+            var sourceLinkSlot = getFirstCreateableSlot(
+                room,
+                getLinkCandidatesNearSource(room, linkSources[linkSourceIndex]),
+                STRUCTURE_LINK
+            );
+            if(sourceLinkSlot) {
+                addFutureSlots(visualPositions, seen, [sourceLinkSlot], STRUCTURE_LINK, limitState);
+            }
+        }
+    }
+
+    if(settings.autoTerminal !== false && hasEarlyExtensionBatch(room, settings)) {
+        var anchor = getAnchorStructure(room);
+        if(anchor) {
+            addFutureSlots(
+                visualPositions,
+                seen,
+                getFutureAnchoredSlots(room, STRUCTURE_TERMINAL, anchor.pos, 2, 4, 1),
+                STRUCTURE_TERMINAL,
+                limitState
+            );
+        }
+    }
+
+    if(settings.autoLabs !== false && hasEarlyExtensionBatch(room, settings)) {
+        var terminal = getTerminal(room);
+        var labAnchor = terminal || getStorage(room) || getPrimarySpawn(room);
+        if(labAnchor) {
+            addFutureSlots(
+                visualPositions,
+                seen,
+                getFutureAnchoredSlots(room, STRUCTURE_LAB, labAnchor.pos, 2, 5, limitState.limit),
+                STRUCTURE_LAB,
+                limitState
+            );
+        }
+    }
+
+    if(settings.autoExtractor !== false && needsMore(room, STRUCTURE_EXTRACTOR)) {
+        var minerals = room.find(FIND_MINERALS);
+        if(minerals.length && canCreateSite(room, minerals[0].pos, STRUCTURE_EXTRACTOR)) {
+            addFutureSlots(visualPositions, seen, [minerals[0].pos], STRUCTURE_EXTRACTOR, limitState);
+        }
+    }
+
+    for(var p = 0; p < visualPositions.length; p++) {
+        drawPlannerSlot(room, visualPositions[p].pos, visualPositions[p].structureType, 0.16);
+    }
+}
+
+function drawPlannerLegend(room, settings) {
+    var lines = [
+        '[Construction Planner]',
+        'solid square: existing',
+        'dashed square: construction site',
+        'circle/label: planned slot',
+        'blue: road intent',
+        'green: rampart perimeter',
+        'limit: ' + (settings.debugPlannerVisualLimit || 120)
+    ];
+
+    room.visual.rect(31.4, 0.4, 17.8, lines.length + 0.5, {
+        fill: '#111111',
+        opacity: 0.35,
+        stroke: '#ffaa00',
+        strokeWidth: 0.05
+    });
+
+    for(var i = 0; i < lines.length; i++) {
+        room.visual.text(lines[i], 32, 1.2 + i, {
+            align: 'left',
+            color: i === 0 ? '#ffaa00' : '#ffffff',
+            font: i === 0 ? 0.65 : 0.5,
+            opacity: 0.9
+        });
+    }
+}
+
+function drawConstructionPlannerVisuals(room, settings) {
+    if(settings.debugPlannerVisuals !== true) {
+        return;
+    }
+
+    drawAllocatedPlannerObjects(room);
+    drawRoadPlannerVisuals(room, settings);
+    drawRampartPlannerVisuals(room, settings);
+    drawFutureBuildingPlannerVisuals(room, settings);
+    drawPlannerLegend(room, settings);
+}
+
 var constructionManager = {
     run: function(room) {
         if(!room.controller || !room.controller.my) {
@@ -2106,6 +2507,7 @@ var constructionManager = {
                 room.name + ' construction planner paused: ' + totalSites + '/' + maxTotalSites + ' total sites',
                 20
             );
+            drawConstructionPlannerVisuals(room, settings);
             return;
         }
 
@@ -2121,6 +2523,8 @@ var constructionManager = {
         if(totalSites < maxTotalSites) {
             planDefense(room, settings, maxTotalSites - totalSites);
         }
+
+        drawConstructionPlannerVisuals(room, settings);
     }
 };
 
