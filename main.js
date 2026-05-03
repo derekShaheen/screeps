@@ -2,6 +2,7 @@ var debug = require('utils.debug');
 var constructionManager = require('manager.construction');
 var labManager = require('manager.lab');
 var linkManager = require('manager.link');
+var remoteManager = require('manager.remote');
 var spawnManager = require('manager.spawn');
 var towerManager = require('manager.tower');
 var uiManager = require('manager.ui');
@@ -10,6 +11,8 @@ var roleHarvester = require('role.harvester');
 var roleBuilder = require('role.builder');
 var roleDefender = require('role.defender');
 var roleMineralHarvester = require('role.mineralHarvester');
+var roleRemoteHauler = require('role.remoteHauler');
+var roleRemoteMiner = require('role.remoteMiner');
 var roleTransporter = require('role.transporter');
 var roleUpgrader = require('role.upgrader');
 
@@ -53,6 +56,14 @@ var DEFAULT_ROOM_MEMORY = {
         requireTowerForDefense: true,
         debugPlannerVisuals: false,
         debugPlannerVisualLimit: 120
+    },
+    remote: {
+        enabled: true,
+        maxRooms: 2,
+        minHomeRcl: 3,
+        minHaulEnergy: 300,
+        staleRoomTicks: 1500,
+        unsafeRoomCooldown: 500
     }
 };
 
@@ -106,10 +117,23 @@ function initializeRoomMemory(room) {
             memory.construction[constructionKey] = DEFAULT_ROOM_MEMORY.construction[constructionKey];
         }
     }
+
+    if(!memory.remote) {
+        memory.remote = {};
+    }
+
+    for(var remoteKey in DEFAULT_ROOM_MEMORY.remote) {
+        if(memory.remote[remoteKey] === undefined) {
+            memory.remote[remoteKey] = DEFAULT_ROOM_MEMORY.remote[remoteKey];
+        }
+    }
 }
 
 function runCreep(creep) {
-    if(creep.memory.role != 'defender' && creepUtils.retreatFromHostiles(creep, 5)) {
+    var isRemoteRole = creep.memory.role == 'remoteMiner' ||
+        creep.memory.role == 'remoteHauler' ||
+        (creep.memory.role == 'transporter' && creep.memory.remoteHauling);
+    if(creep.memory.role != 'defender' && !isRemoteRole && creepUtils.retreatFromHostiles(creep, 5)) {
         return;
     }
 
@@ -143,6 +167,16 @@ function runCreep(creep) {
         return;
     }
 
+    if(creep.memory.role == 'remoteMiner') {
+        roleRemoteMiner.run(creep);
+        return;
+    }
+
+    if(creep.memory.role == 'remoteHauler') {
+        roleRemoteHauler.run(creep);
+        return;
+    }
+
     debug.log('debugRoles', creep.name + ' has unknown role ' + creep.memory.role, 5);
 }
 
@@ -164,6 +198,12 @@ module.exports.loop = function () {
 
     for(var labRoomName in Game.rooms) {
         labManager.run(Game.rooms[labRoomName]);
+    }
+
+    for(var remoteRoomName in Game.rooms) {
+        if(Game.rooms[remoteRoomName].controller && Game.rooms[remoteRoomName].controller.my) {
+            remoteManager.run(Game.rooms[remoteRoomName]);
+        }
     }
 
     for(var constructionRoomName in Game.rooms) {

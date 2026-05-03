@@ -1,5 +1,6 @@
 var debug = require('utils.debug');
 var defenseUtils = require('utils.defense');
+var remoteManager = require('manager.remote');
 
 var BASE_TARGETS = {
     harvester: 2,
@@ -43,6 +44,18 @@ var BODIES = {
         [WORK, WORK, WORK, CARRY, CARRY, MOVE, MOVE],
         [WORK, WORK, WORK, WORK, CARRY, CARRY, MOVE, MOVE]
     ],
+    remoteMiner: [
+        [WORK, CARRY, MOVE, MOVE],
+        [WORK, WORK, CARRY, MOVE, MOVE, MOVE],
+        [WORK, WORK, WORK, CARRY, MOVE, MOVE, MOVE, MOVE],
+        [WORK, WORK, WORK, WORK, CARRY, MOVE, MOVE, MOVE, MOVE, MOVE]
+    ],
+    remoteHauler: [
+        [CARRY, CARRY, MOVE, MOVE],
+        [CARRY, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE, MOVE],
+        [CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE],
+        [CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE]
+    ],
     defender: [
         [ATTACK, ATTACK, MOVE],
         [TOUGH, RANGED_ATTACK, MOVE, MOVE],
@@ -68,6 +81,8 @@ var LOW_STAFF_BODY_BUDGET = {
     upgrader: 800,
     builder: 700,
     mineralHarvester: 800,
+    remoteMiner: 700,
+    remoteHauler: 800,
     defender: 650,
     defenderHealer: 850
 };
@@ -78,6 +93,8 @@ var BODY_GROWTH = {
     upgrader: [WORK, WORK, CARRY, MOVE],
     builder: [WORK, CARRY, CARRY, MOVE],
     mineralHarvester: [WORK, WORK, CARRY, MOVE],
+    remoteMiner: [WORK, MOVE],
+    remoteHauler: [CARRY, CARRY, MOVE, MOVE],
     defender: [TOUGH, ATTACK, MOVE],
     defenderHealer: [TOUGH, HEAL, MOVE]
 };
@@ -728,9 +745,10 @@ function getBodyType(role, defenderType) {
     return role;
 }
 
-function spawnRole(spawn, role, counts, targets) {
+function spawnRole(spawn, role, counts, targets, request) {
+    request = request || {};
     var defenderType = role == 'defender' ? getDefenderSpawnType(spawn.room, counts, targets) : null;
-    var bodyType = getBodyType(role, defenderType);
+    var bodyType = request.bodyType || getBodyType(role, defenderType);
     var bodyDecision = getSpawnBodyDecision(spawn.room, role, bodyType, counts, targets);
     var body = bodyDecision.body;
     if(!body) {
@@ -750,6 +768,12 @@ function spawnRole(spawn, role, counts, targets) {
         role: role,
         working: false
     };
+    if(request.memory) {
+        for(var memoryKey in request.memory) {
+            memory[memoryKey] = request.memory[memoryKey];
+        }
+    }
+
     if(defenderType) {
         memory.defenderType = defenderType;
     }
@@ -763,6 +787,7 @@ function spawnRole(spawn, role, counts, targets) {
             'debugSpawn',
             spawn.name + ' spawning ' + name +
                 (defenderType ? ' ' + defenderType : '') +
+                (memory.targetRoom ? ' -> ' + memory.targetRoom : '') +
                 ' (' + body.join(',') + ') ' +
                 'energy ' + bodyCost(body) + '/' + spawn.room.energyCapacityAvailable +
                 (bodyDecision.recoverySpawn ? ' recovery ' : ' ') +
@@ -795,7 +820,13 @@ var spawnManager = {
         var role = getSpawnRole(counts, targets);
 
         if(!role) {
-            debug.log('debugSpawn', spawn.name + ' has all creep targets satisfied', 20);
+            var remoteRequest = remoteManager.getSpawnRequest(spawn.room);
+            if(!remoteRequest) {
+                debug.log('debugSpawn', spawn.name + ' has all creep targets satisfied', 20);
+                return;
+            }
+
+            spawnRole(spawn, remoteRequest.role, counts, targets, remoteRequest);
             return;
         }
 

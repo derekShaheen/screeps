@@ -1,5 +1,6 @@
 var creepUtils = require('utils.creep');
 var debug = require('utils.debug');
+var remoteManager = require('manager.remote');
 
 var TOWER_PEACE_REFILL_TARGET = 600;
 var TERMINAL_ENERGY_TARGET = 5000;
@@ -195,9 +196,26 @@ function idleNearBase(creep) {
 
 var roleTransporter = {
     run: function(creep) {
+        if(creep.memory.remoteHauling &&
+            (remoteManager.hasThreats(creep.room) ||
+            (creep.room.name == creep.memory.targetRoom && remoteManager.hasHostileTower(creep.room)))) {
+            if(creep.room.name == creep.memory.targetRoom) {
+                remoteManager.markUnsafe(creep.memory.homeRoom || creep.room.name, creep.memory.targetRoom || creep.room.name, 'remote unsafe');
+            }
+            return remoteManager.moveHome(creep, 'retreat');
+        }
+
         creepUtils.updateWorkingState(creep, 'deliver', 'haul');
 
         if(creep.memory.working) {
+            if(creep.memory.remoteHauling) {
+                if(remoteManager.deliverHome(creep)) {
+                    return;
+                }
+
+                delete creep.memory.remoteHauling;
+            }
+
             var deliveryTarget = findDeliveryTarget(creep);
             if(deliveryTarget) {
                 creepUtils.transferEnergy(creep, deliveryTarget);
@@ -211,11 +229,21 @@ var roleTransporter = {
 
         var sourceEnergy = findSourceEnergy(creep) || findFallbackStoredEnergy(creep);
         if(sourceEnergy) {
+            delete creep.memory.remoteHauling;
             withdrawEnergy(creep, sourceEnergy);
             return;
         }
 
         if(creepUtils.collectEnergy(creep, {allowHarvest: false, allowStored: false})) {
+            return;
+        }
+
+        var remoteEnergy = remoteManager.findRemoteEnergyTarget(creep, creep.room.name);
+        if(remoteEnergy) {
+            creep.memory.remoteHauling = true;
+            creep.memory.homeRoom = creep.room.name;
+            creep.memory.targetRoom = remoteEnergy.pos.roomName;
+            remoteManager.withdrawOrPickup(creep, remoteEnergy);
             return;
         }
 

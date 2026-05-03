@@ -30,13 +30,47 @@ function countSitesByType(sites, structureType) {
     return count;
 }
 
+function getIgnoredConstructionSites(room) {
+    if(!room.memory.ignoredConstructionSites) {
+        room.memory.ignoredConstructionSites = {};
+    }
+
+    var ignored = room.memory.ignoredConstructionSites;
+    for(var siteId in ignored) {
+        if(ignored[siteId] <= Game.time) {
+            delete ignored[siteId];
+        }
+    }
+
+    return ignored;
+}
+
+function isIgnoredConstructionSite(room, site) {
+    if(!site.id) {
+        return false;
+    }
+
+    var ignored = getIgnoredConstructionSites(room);
+    return ignored[site.id] && ignored[site.id] > Game.time;
+}
+
+function ignoreConstructionSite(room, site, ticks) {
+    if(!site.id) {
+        return;
+    }
+
+    getIgnoredConstructionSites(room)[site.id] = Game.time + (ticks || 100);
+}
+
 function findConstructionTarget(creep, sites) {
     if(!sites.length) {
         return null;
     }
 
     sites = sites.filter(function(site) {
-        return creepUtils.isSafeTarget(creep, site) &&
+        return site.my !== false &&
+            !isIgnoredConstructionSite(creep.room, site) &&
+            creepUtils.isSafeTarget(creep, site) &&
             defenseUtils.shouldBuildConstructionSite(site) &&
             creepUtils.canReachBeforeDecay(creep, site, 3);
     });
@@ -249,6 +283,16 @@ function build(creep, target) {
     }
 
     debug.log('debugRoles', creep.name + ' build failed for ' + target.structureType + ': ' + result, 1);
+    if(result == ERR_INVALID_TARGET ||
+        (typeof ERR_RCL_NOT_ENOUGH != 'undefined' && result == ERR_RCL_NOT_ENOUGH)) {
+        ignoreConstructionSite(creep.room, target, 100);
+        debug.log(
+            'debugRoles',
+            creep.name + ' temporarily ignoring invalid construction target at ' + formatPos(target.pos),
+            1
+        );
+    }
+
     return result == OK;
 }
 
