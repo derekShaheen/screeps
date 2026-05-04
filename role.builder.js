@@ -145,10 +145,12 @@ function sortConstructionSites(sites) {
     });
 }
 
-function findConstructionTarget(creep, sites) {
+function findConstructionTarget(creep, sites, allowAssisting) {
     if(!sites.length) {
         return null;
     }
+
+    allowAssisting = allowAssisting === true;
 
     var rememberedTarget = creep.memory.constructionTargetId ?
         Game.getObjectById(creep.memory.constructionTargetId) :
@@ -173,6 +175,9 @@ function findConstructionTarget(creep, sites) {
     var uniqueSites = eligibleSites.filter(function(site) {
         return !isReservedConstructionSite(creep.room, site, creep.name);
     });
+    if(!uniqueSites.length && !allowAssisting) {
+        return null;
+    }
 
     var assisting = uniqueSites.length < 1;
     var targetSites = assisting ? eligibleSites : uniqueSites;
@@ -619,7 +624,29 @@ var roleBuilder = {
             return;
         }
 
-        var constructionTarget = findConstructionTarget(creep, sites);
+        var constructionTarget = findConstructionTarget(creep, sites, false);
+        if(constructionTarget) {
+            if(!build(creep, constructionTarget)) {
+                releaseConstructionReservation(creep);
+            }
+            return;
+        }
+
+        releaseConstructionReservation(creep);
+
+        var criticalRepairTarget = findCriticalRepairTarget(creep);
+        if(criticalRepairTarget) {
+            debug.log(
+                'debugRoles',
+                creep.name + ' critical repair target ' + criticalRepairTarget.structureType +
+                    ' in ' + creep.room.name,
+                5
+            );
+            repair(creep, criticalRepairTarget);
+            return;
+        }
+
+        constructionTarget = findConstructionTarget(creep, sites, true);
         if(constructionTarget) {
             if(!build(creep, constructionTarget)) {
                 releaseConstructionReservation(creep);
