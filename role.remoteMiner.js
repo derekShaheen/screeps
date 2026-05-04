@@ -57,6 +57,53 @@ function abortBlockedRemote(creep) {
     return true;
 }
 
+function convertToHomeHarvester(creep, reason) {
+    var targetRoom = creep.memory.targetRoom;
+    var homeRoom = creep.memory.homeRoom;
+
+    creep.memory.role = 'harvester';
+    creep.memory.working = creep.store[RESOURCE_ENERGY] > 0;
+    creep.memory.previousRemoteRole = {
+        role: 'remoteMiner',
+        targetRoom: targetRoom,
+        reason: reason || 'remote blocked',
+        tick: Game.time
+    };
+
+    delete creep.memory.targetRoom;
+    delete creep.memory.sourceId;
+    delete creep.memory.containerSourceId;
+    delete creep.memory.harvestSourceId;
+    delete creep.memory.moveState;
+
+    debug.log(
+        'debugRoles',
+        creep.name + ' converted from remoteMiner to local harvester in ' +
+            creep.room.name + ' after ' + (reason || 'remote blocked') +
+            (targetRoom ? ' for ' + targetRoom : '') +
+            (homeRoom ? ' home=' + homeRoom : ''),
+        1
+    );
+    creepUtils.announceIntent(creep, 'state:homeHarvester', 'local');
+    return true;
+}
+
+function workAtHomeAfterBlocked(creep, reason) {
+    var homeRoom = Game.rooms[creep.memory.homeRoom];
+    if(!homeRoom || creep.room.name != homeRoom.name) {
+        delete creep.memory.sourceId;
+        creepUtils.announceIntent(creep, 'action:remoteAbort', 'blocked');
+        creepUtils.moveTo(creep, getHomeFallback(creep), '#ff66cc', 'blocked', 'move:remoteBlocked');
+        return true;
+    }
+
+    if(!homeRoom.controller || !homeRoom.controller.my) {
+        return abortBlockedRemote(creep);
+    }
+
+    return convertToHomeHarvester(creep, reason);
+}
+
 function deliverIfReturningHome(creep) {
     if(creep.memory.working && creep.store[RESOURCE_ENERGY] === 0) {
         creep.memory.working = false;
@@ -267,7 +314,7 @@ function mineToContainer(creep, source, container) {
     }
 
     if(harvestResult == ERR_NOT_OWNER) {
-        return retreatHome(creep, 'not harvestable');
+        return workAtHomeAfterBlocked(creep, 'not harvestable');
     }
 
     debug.log(
@@ -328,7 +375,7 @@ function mineLoose(creep, source) {
     }
 
     if(result == ERR_NOT_OWNER) {
-        return retreatHome(creep, 'not harvestable');
+        return workAtHomeAfterBlocked(creep, 'not harvestable');
     }
 
     debug.log(
@@ -361,7 +408,7 @@ var roleRemoteMiner = {
         }
 
         if(!remoteManager.isRemoteUsable(creep.memory.homeRoom, creep.memory.targetRoom)) {
-            return abortBlockedRemote(creep);
+            return workAtHomeAfterBlocked(creep, 'remote blocked');
         }
 
         if(creep.room.name != creep.memory.targetRoom) {
@@ -369,7 +416,7 @@ var roleRemoteMiner = {
         }
 
         if(!remoteManager.canHarvestRemoteRoom(creep.room)) {
-            return retreatHome(creep, 'not harvestable');
+            return workAtHomeAfterBlocked(creep, 'not harvestable');
         }
 
         var source = chooseSource(creep);
