@@ -57,6 +57,19 @@ function abortBlockedRemote(creep) {
     return true;
 }
 
+function deliverIfReturningHome(creep) {
+    if(creep.memory.working && creep.store[RESOURCE_ENERGY] === 0) {
+        creep.memory.working = false;
+        return false;
+    }
+
+    if(!creep.memory.working) {
+        return false;
+    }
+
+    return remoteManager.deliverHome(creep);
+}
+
 function moveToTargetRoom(creep) {
     creepUtils.moveTo(
         creep,
@@ -208,36 +221,6 @@ function ensureContainerSite(creep, source) {
     return false;
 }
 
-function buildSite(creep, site, source) {
-    if(creep.store[RESOURCE_ENERGY] === 0) {
-        var harvestResult = creep.harvest(source);
-        if(harvestResult == ERR_NOT_IN_RANGE) {
-            creepUtils.moveTo(creep, site, '#ffaa00', 'go mine', 'move:remoteMine');
-            return true;
-        }
-
-        if(harvestResult == OK) {
-            creepUtils.announceIntent(creep, 'action:remoteHarvest', 'mine');
-            return true;
-        }
-
-        return false;
-    }
-
-    var buildResult = creep.build(site);
-    if(buildResult == ERR_NOT_IN_RANGE) {
-        creepUtils.moveTo(creep, site, '#ffffff', 'build box', 'move:remoteBuild');
-        return true;
-    }
-
-    if(buildResult == OK) {
-        creepUtils.announceIntent(creep, 'action:remoteBuild', 'build');
-        return true;
-    }
-
-    return false;
-}
-
 function mineToContainer(creep, source, container) {
     if(creep.store[RESOURCE_ENERGY] > 0 && container.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
         var transferResult = creep.transfer(container, RESOURCE_ENERGY);
@@ -283,14 +266,20 @@ function mineToContainer(creep, source, container) {
 }
 
 function mineLoose(creep, source) {
-    if(!creep.pos.inRangeTo(source, 1)) {
-        creepUtils.moveTo(creep, source, '#ffaa00', 'go mine', 'move:remoteMine');
-        return true;
+    if(creep.memory.working && creep.store[RESOURCE_ENERGY] === 0) {
+        creep.memory.working = false;
     }
 
-    if(creep.store.getFreeCapacity(RESOURCE_ENERGY) === 0) {
-        creep.drop(RESOURCE_ENERGY);
-        creepUtils.announceIntent(creep, 'action:remoteDrop', 'drop');
+    if(!creep.memory.working && creep.store.getFreeCapacity(RESOURCE_ENERGY) === 0) {
+        creep.memory.working = true;
+    }
+
+    if(creep.memory.working) {
+        return remoteManager.deliverHome(creep);
+    }
+
+    if(!creep.pos.inRangeTo(source, 1)) {
+        creepUtils.moveTo(creep, source, '#ffaa00', 'go mine', 'move:remoteMine');
         return true;
     }
 
@@ -309,16 +298,21 @@ var roleRemoteMiner = {
             return retreatHome(creep, 'combat hostile');
         }
 
+        if(creep.room.name == creep.memory.targetRoom &&
+            remoteManager.hasHostileTower(creep.room)) {
+            return retreatHome(creep, 'hostile tower');
+        }
+
+        if(deliverIfReturningHome(creep)) {
+            return true;
+        }
+
         if(!remoteManager.isRemoteUsable(creep.memory.homeRoom, creep.memory.targetRoom)) {
             return abortBlockedRemote(creep);
         }
 
         if(creep.room.name != creep.memory.targetRoom) {
             return moveToTargetRoom(creep);
-        }
-
-        if(remoteManager.hasHostileTower(creep.room)) {
-            return retreatHome(creep, 'hostile tower');
         }
 
         if(!remoteManager.canHarvestRemoteRoom(creep.room)) {
@@ -332,11 +326,6 @@ var roleRemoteMiner = {
 
         if(canBuildRemoteInfrastructure(creep)) {
             ensureContainerSite(creep, source);
-        }
-
-        var site = getContainerSite(source);
-        if(site && canBuildRemoteInfrastructure(creep)) {
-            return buildSite(creep, site, source);
         }
 
         var container = getSourceContainer(source);
