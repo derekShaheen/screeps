@@ -209,6 +209,10 @@ function updateRemoteMemory(room) {
 }
 
 function canUseRemote(room, remoteName, remoteMemory, settings) {
+    if(!isAccessibleMapRoom(remoteName)) {
+        return false;
+    }
+
     if(remoteMemory.enabled === false) {
         return false;
     }
@@ -222,6 +226,21 @@ function canUseRemote(room, remoteName, remoteMemory, settings) {
     }
 
     return remoteMemory.status == 'ready' || remoteMemory.status == 'unknown';
+}
+
+function isRemoteUsable(homeRoomName, targetRoomName) {
+    var homeRoom = Game.rooms[homeRoomName];
+    if(!homeRoom || !targetRoomName) {
+        return false;
+    }
+
+    var settings = updateRemoteMemory(homeRoom);
+    var remoteMemory = settings.rooms[targetRoomName];
+    if(!remoteMemory) {
+        return false;
+    }
+
+    return canUseRemote(homeRoom, targetRoomName, remoteMemory, settings);
 }
 
 function getHomeExplorationBlockers(room, memory, settings) {
@@ -602,7 +621,10 @@ function findRemoteEnergyTarget(creep, homeRoomName) {
 
     for(var i = 0; i < rooms.length; i++) {
         var remoteRoom = Game.rooms[rooms[i].name];
-        if(!remoteRoom || hasThreats(remoteRoom)) {
+        if(!remoteRoom ||
+            hasThreats(remoteRoom) ||
+            hasHostileTower(remoteRoom) ||
+            !canHarvestRemoteRoom(remoteRoom)) {
             continue;
         }
 
@@ -702,6 +724,7 @@ module.exports = {
     getSpawnRequest: getSpawnRequest,
     hasHostileTower: hasHostileTower,
     hasThreats: hasThreats,
+    isRemoteUsable: isRemoteUsable,
     canHarvestRemoteRoom: canHarvestRemoteRoom,
     markUnsafe: markUnsafe,
     moveHome: moveHome,

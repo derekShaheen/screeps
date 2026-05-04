@@ -50,6 +50,13 @@ function retreatHome(creep, reason) {
     return true;
 }
 
+function abortBlockedRemote(creep) {
+    delete creep.memory.sourceId;
+    creepUtils.announceIntent(creep, 'action:remoteAbort', 'blocked');
+    creepUtils.moveTo(creep, getHomeFallback(creep), '#ff66cc', 'blocked', 'move:remoteBlocked');
+    return true;
+}
+
 function moveToTargetRoom(creep) {
     creepUtils.moveTo(
         creep,
@@ -300,6 +307,10 @@ var roleRemoteMiner = {
     run: function(creep) {
         if(remoteManager.hasThreats(creep.room)) {
             return retreatHome(creep, 'combat hostile');
+        }
+
+        if(!remoteManager.isRemoteUsable(creep.memory.homeRoom, creep.memory.targetRoom)) {
+            return abortBlockedRemote(creep);
         }
 
         if(creep.room.name != creep.memory.targetRoom) {
