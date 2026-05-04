@@ -224,6 +224,64 @@ function canUseRemote(room, remoteName, remoteMemory, settings) {
     return remoteMemory.status == 'ready' || remoteMemory.status == 'unknown';
 }
 
+function getHomeExplorationBlockers(room, memory, settings) {
+    var blockers = [];
+
+    if(!settings) {
+        blockers.push('remote memory missing');
+        return blockers;
+    }
+
+    if(settings.enabled === false) {
+        blockers.push('remote.enabled=false');
+    }
+
+    if(!room) {
+        blockers.push('home room not visible');
+        return blockers;
+    }
+
+    if(!room.controller || !room.controller.my) {
+        blockers.push('home controller not owned');
+    }
+    else if(room.controller.level < settings.minHomeRcl) {
+        blockers.push('RCL ' + room.controller.level + ' < minHomeRcl ' + settings.minHomeRcl);
+    }
+
+    return blockers;
+}
+
+function getRemoteExplorationBlockers(room, remoteName, remoteMemory, settings) {
+    var blockers = [];
+
+    if(!remoteMemory) {
+        blockers.push('remote memory missing');
+        return blockers;
+    }
+
+    if(remoteMemory.enabled === false) {
+        blockers.push('remote disabled');
+    }
+
+    if(!isAccessibleMapRoom(remoteName)) {
+        blockers.push('map status ' + getMapRoomStatus(remoteName));
+    }
+
+    if(remoteMemory.distance && remoteMemory.distance > settings.maxRooms) {
+        blockers.push('distance ' + remoteMemory.distance + ' > maxRooms ' + settings.maxRooms);
+    }
+
+    if(remoteMemory.unsafeUntil && remoteMemory.unsafeUntil > Game.time) {
+        blockers.push('unsafe cooldown ' + (remoteMemory.unsafeUntil - Game.time));
+    }
+
+    if(remoteMemory.status != 'ready' && remoteMemory.status != 'unknown') {
+        blockers.push('status ' + (remoteMemory.status || 'unknown') + (remoteMemory.reason ? ': ' + remoteMemory.reason : ''));
+    }
+
+    return blockers;
+}
+
 function getActiveRemoteRooms(room) {
     var settings = getSettings(room);
     var rooms = [];
@@ -256,6 +314,11 @@ function getRoomReportLine(roomName, remoteName, remoteMemory) {
         '';
     var reason = remoteMemory.reason ? ' ' + remoteMemory.reason : '';
     var enabled = remoteMemory.enabled === false ? ' disabled' : '';
+    var homeRoom = Game.rooms[roomName];
+    var homeMemory = Memory.rooms && Memory.rooms[roomName] ? Memory.rooms[roomName] : null;
+    var settings = homeRoom ? getSettings(homeRoom) : (homeMemory ? homeMemory.remote : null);
+    var blockers = settings ? getRemoteExplorationBlockers(homeRoom, remoteName, remoteMemory, settings) : ['remote memory missing'];
+    var decision = blockers.length ? ' blockedBy=' + blockers.join(', ') : ' eligible';
 
     return roomName + ' -> ' + remoteName +
         ' status=' + status +
@@ -265,7 +328,8 @@ function getRoomReportLine(roomName, remoteName, remoteMemory) {
         ' sources=' + sources +
         unsafe +
         reason +
-        enabled;
+        enabled +
+        decision;
 }
 
 function getReport(homeRoomName) {
@@ -299,11 +363,13 @@ function getReport(homeRoomName) {
         }
 
         var remoteNames = Object.keys(settings.rooms).sort();
+        var homeBlockers = getHomeExplorationBlockers(room, memory, settings);
         lines.push(
             '[' + roomNames[i] + '] remote enabled=' + (settings.enabled !== false) +
                 ' maxRooms=' + settings.maxRooms +
                 ' minHomeRcl=' + settings.minHomeRcl +
-                ' known=' + remoteNames.length
+                ' known=' + remoteNames.length +
+                (homeBlockers.length ? ' blockedBy=' + homeBlockers.join(', ') : ' eligible')
         );
 
         if(!remoteNames.length) {

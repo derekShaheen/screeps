@@ -62,14 +62,95 @@ function ignoreConstructionSite(room, site, ticks) {
     getIgnoredConstructionSites(room)[site.id] = Game.time + (ticks || 100);
 }
 
+function getConstructionReservations(room) {
+    if(!room.memory.constructionReservations) {
+        room.memory.constructionReservations = {};
+    }
+
+    var reservations = room.memory.constructionReservations;
+    for(var siteId in reservations) {
+        var creep = Game.creeps[reservations[siteId].creepName];
+        var site = Game.getObjectById(siteId);
+        if(!creep ||
+            !site ||
+            creep.memory.role != 'builder' ||
+            creep.memory.constructionTargetId != siteId ||
+            !creep.memory.working ||
+            creep.store[RESOURCE_ENERGY] === 0 ||
+            reservations[siteId].expires <= Game.time) {
+            delete reservations[siteId];
+            continue;
+        }
+    }
+
+    return reservations;
+}
+
+function isReservedConstructionSite(room, site, creepName) {
+    if(!site.id) {
+        return false;
+    }
+
+    var reservations = getConstructionReservations(room);
+    return reservations[site.id] &&
+        reservations[site.id].creepName != creepName;
+}
+
+function reserveConstructionSite(creep, site) {
+    if(!site || !site.id) {
+        return;
+    }
+
+    var reservations = getConstructionReservations(creep.room);
+    reservations[site.id] = {
+        creepName: creep.name,
+        expires: Game.time + 25
+    };
+    creep.memory.constructionTargetId = site.id;
+}
+
+function releaseConstructionReservation(creep) {
+    var targetId = creep.memory.constructionTargetId;
+    if(!targetId) {
+        return;
+    }
+
+    if(creep.room &&
+        creep.room.memory &&
+        creep.room.memory.constructionReservations &&
+        creep.room.memory.constructionReservations[targetId] &&
+        creep.room.memory.constructionReservations[targetId].creepName == creep.name) {
+        delete creep.room.memory.constructionReservations[targetId];
+    }
+
+    delete creep.memory.constructionTargetId;
+}
+
 function findConstructionTarget(creep, sites) {
     if(!sites.length) {
         return null;
     }
 
+    var rememberedTarget = creep.memory.constructionTargetId ?
+        Game.getObjectById(creep.memory.constructionTargetId) :
+        null;
+    if(rememberedTarget &&
+        rememberedTarget.my !== false &&
+        !isIgnoredConstructionSite(creep.room, rememberedTarget) &&
+        !isReservedConstructionSite(creep.room, rememberedTarget, creep.name) &&
+        creepUtils.isSafeTarget(creep, rememberedTarget) &&
+        defenseUtils.shouldBuildConstructionSite(rememberedTarget) &&
+        creepUtils.canReachBeforeDecay(creep, rememberedTarget, 3)) {
+        reserveConstructionSite(creep, rememberedTarget);
+        return rememberedTarget;
+    }
+
+    releaseConstructionReservation(creep);
+
     sites = sites.filter(function(site) {
         return site.my !== false &&
             !isIgnoredConstructionSite(creep.room, site) &&
+            !isReservedConstructionSite(creep.room, site, creep.name) &&
             creepUtils.isSafeTarget(creep, site) &&
             defenseUtils.shouldBuildConstructionSite(site) &&
             creepUtils.canReachBeforeDecay(creep, site, 3);
@@ -96,6 +177,7 @@ function findConstructionTarget(creep, sites) {
             ' progress ' + sites[0].progress + '/' + sites[0].progressTotal,
         3
     );
+    reserveConstructionSite(creep, sites[0]);
     return sites[0];
 }
 
@@ -514,6 +596,7 @@ var roleBuilder = {
         );
 
         if(!creep.memory.working) {
+            releaseConstructionReservation(creep);
             debug.log('debugRoles', creep.name + ' gathering energy before building', 10);
             creepUtils.collectEnergy(creep);
             return;
@@ -525,9 +608,13 @@ var roleBuilder = {
 
         var constructionTarget = findConstructionTarget(creep, sites);
         if(constructionTarget) {
-            build(creep, constructionTarget);
+            if(!build(creep, constructionTarget)) {
+                releaseConstructionReservation(creep);
+            }
             return;
         }
+
+        releaseConstructionReservation(creep);
 
         var allowWallRepair = canRepairWalls(creep);
         var repairTarget = findRepairTarget(creep, allowWallRepair);
