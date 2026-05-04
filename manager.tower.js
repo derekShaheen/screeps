@@ -212,6 +212,10 @@ function activateSafeModeIfNeeded(room, hostiles) {
 
 var towerManager = {
     run: function(room) {
+        if(!room.controller || !room.controller.my) {
+            return;
+        }
+
         var hostiles = room.find(FIND_HOSTILE_CREEPS);
         if(hostiles.length > 0) {
             room.memory.lastHostileSeenTick = Game.time;
