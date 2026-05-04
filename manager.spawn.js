@@ -520,6 +520,17 @@ function getHostileThreatCount(room) {
     return hostiles.length;
 }
 
+function getHostileCombatThreatCount(room) {
+    var hostiles = room.find(FIND_HOSTILE_CREEPS, {
+        filter: function(creep) {
+            return creep.getActiveBodyparts(ATTACK) > 0 ||
+                creep.getActiveBodyparts(RANGED_ATTACK) > 0;
+        }
+    });
+
+    return hostiles.length;
+}
+
 function getHostileUnitCount(room) {
     return room.find(FIND_HOSTILE_CREEPS).length;
 }
@@ -768,6 +779,10 @@ function makeCreepName(role) {
 function getDefenderSpawnType(room, counts, targets) {
     if(targets.defender < 2 ||
         room.energyCapacityAvailable < bodyCost(MIN_DEFENDER_HEALER_BODY)) {
+        return 'attacker';
+    }
+
+    if(getHostileCombatThreatCount(room) < 1 && counts.defenderAttackers < 1) {
         return 'attacker';
     }
 
