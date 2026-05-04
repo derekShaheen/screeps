@@ -126,6 +126,25 @@ function releaseConstructionReservation(creep) {
     delete creep.memory.constructionTargetId;
 }
 
+function isEligibleConstructionSite(creep, site) {
+    return site.my !== false &&
+        !isIgnoredConstructionSite(creep.room, site) &&
+        creepUtils.isSafeTarget(creep, site) &&
+        defenseUtils.shouldBuildConstructionSite(site) &&
+        creepUtils.canReachBeforeDecay(creep, site, 3);
+}
+
+function sortConstructionSites(sites) {
+    sites.sort(function(a, b) {
+        var priorityDiff = getPriority(a) - getPriority(b);
+        if(priorityDiff !== 0) {
+            return priorityDiff;
+        }
+
+        return (a.progressTotal - a.progress) - (b.progressTotal - b.progress);
+    });
+}
+
 function findConstructionTarget(creep, sites) {
     if(!sites.length) {
         return null;
@@ -135,50 +154,44 @@ function findConstructionTarget(creep, sites) {
         Game.getObjectById(creep.memory.constructionTargetId) :
         null;
     if(rememberedTarget &&
-        rememberedTarget.my !== false &&
-        !isIgnoredConstructionSite(creep.room, rememberedTarget) &&
-        !isReservedConstructionSite(creep.room, rememberedTarget, creep.name) &&
-        creepUtils.isSafeTarget(creep, rememberedTarget) &&
-        defenseUtils.shouldBuildConstructionSite(rememberedTarget) &&
-        creepUtils.canReachBeforeDecay(creep, rememberedTarget, 3)) {
+        isEligibleConstructionSite(creep, rememberedTarget) &&
+        !isReservedConstructionSite(creep.room, rememberedTarget, creep.name)) {
         reserveConstructionSite(creep, rememberedTarget);
         return rememberedTarget;
     }
 
     releaseConstructionReservation(creep);
 
-    sites = sites.filter(function(site) {
-        return site.my !== false &&
-            !isIgnoredConstructionSite(creep.room, site) &&
-            !isReservedConstructionSite(creep.room, site, creep.name) &&
-            creepUtils.isSafeTarget(creep, site) &&
-            defenseUtils.shouldBuildConstructionSite(site) &&
-            creepUtils.canReachBeforeDecay(creep, site, 3);
+    var eligibleSites = sites.filter(function(site) {
+        return isEligibleConstructionSite(creep, site);
     });
-    if(!sites.length) {
+    if(!eligibleSites.length) {
         debug.log('debugDefense', creep.name + ' found no safe construction sites', 5);
         return null;
     }
 
-    sites.sort(function(a, b) {
-        var priorityDiff = getPriority(a) - getPriority(b);
-        if(priorityDiff !== 0) {
-            return priorityDiff;
-        }
-
-        return (a.progressTotal - a.progress) - (b.progressTotal - b.progress);
+    var uniqueSites = eligibleSites.filter(function(site) {
+        return !isReservedConstructionSite(creep.room, site, creep.name);
     });
+
+    var assisting = uniqueSites.length < 1;
+    var targetSites = assisting ? eligibleSites : uniqueSites;
+    sortConstructionSites(targetSites);
 
     debug.log(
         'debugRoles',
-        creep.name + ' build target ' + sites[0].structureType +
-            ' at ' + formatPos(sites[0].pos) +
-            ' priority ' + getPriority(sites[0]) +
-            ' progress ' + sites[0].progress + '/' + sites[0].progressTotal,
+        creep.name + (assisting ? ' assisting build target ' : ' build target ') + targetSites[0].structureType +
+            ' at ' + formatPos(targetSites[0].pos) +
+            ' priority ' + getPriority(targetSites[0]) +
+            ' progress ' + targetSites[0].progress + '/' + targetSites[0].progressTotal,
         3
     );
-    reserveConstructionSite(creep, sites[0]);
-    return sites[0];
+
+    if(!assisting) {
+        reserveConstructionSite(creep, targetSites[0]);
+    }
+
+    return targetSites[0];
 }
 
 function findCriticalRepairTarget(creep) {
