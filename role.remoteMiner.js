@@ -266,6 +266,10 @@ function mineToContainer(creep, source, container) {
         return waitForSourceRegen(creep, source);
     }
 
+    if(harvestResult == ERR_NOT_OWNER) {
+        return retreatHome(creep, 'not harvestable');
+    }
+
     debug.log(
         'debugRoles',
         creep.name + ' remote container harvest failed at ' +
@@ -321,6 +325,10 @@ function mineLoose(creep, source) {
 
     if(result == ERR_NOT_ENOUGH_RESOURCES) {
         return waitForSourceRegen(creep, source);
+    }
+
+    if(result == ERR_NOT_OWNER) {
+        return retreatHome(creep, 'not harvestable');
     }
 
     debug.log(

@@ -30,11 +30,7 @@ function getSettings(room) {
     return room.memory.remote;
 }
 
-function getOwnedUsername(room) {
-    if(room.controller && room.controller.owner) {
-        return room.controller.owner.username;
-    }
-
+function getMyUsername() {
     for(var name in Game.spawns) {
         return Game.spawns[name].owner.username;
     }
@@ -62,8 +58,29 @@ function hasHostileTower(room) {
     }).length > 0;
 }
 
+function getHarvestBlockReason(room) {
+    if(!room.controller) {
+        return 'no controller';
+    }
+
+    var username = getMyUsername();
+    if(room.controller.owner && !room.controller.my) {
+        return 'controller owned by ' + room.controller.owner.username;
+    }
+
+    if(room.controller.reservation &&
+        username &&
+        room.controller.reservation.username != username) {
+        return 'controller reserved by ' + room.controller.reservation.username;
+    }
+
+    return null;
+}
+
 function canHarvestRemoteRoom(room) {
-    return !!room.controller && !hasThreats(room) && !hasHostileTower(room);
+    return !getHarvestBlockReason(room) &&
+        !hasThreats(room) &&
+        !hasHostileTower(room);
 }
 
 function getRoomLinearDistance(homeRoomName, targetRoomName) {
@@ -354,6 +371,13 @@ function updateVisibleRemoteRoom(homeRoom, remoteName, remoteMemory) {
     if(!remoteRoom.controller) {
         remoteMemory.status = 'blocked';
         remoteMemory.reason = 'no controller';
+        return;
+    }
+
+    var harvestBlockReason = getHarvestBlockReason(remoteRoom);
+    if(harvestBlockReason) {
+        remoteMemory.status = 'blocked';
+        remoteMemory.reason = harvestBlockReason;
         return;
     }
 
