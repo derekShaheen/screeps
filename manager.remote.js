@@ -122,6 +122,17 @@ function isAccessibleRemoteMapRoom(homeRoomName, remoteRoomName) {
         getMapRoomStatus(homeRoomName) == 'novice';
 }
 
+function hasBlueRemoteFlag(roomName) {
+    for(var flagName in Game.flags) {
+        var flag = Game.flags[flagName];
+        if(flag.pos.roomName == roomName && flag.color == COLOR_BLUE) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 function getPrimaryHomeAnchor(room) {
     var spawns = room.find(FIND_MY_STRUCTURES, {
         filter: function(structure) {
@@ -498,12 +509,17 @@ function getActiveRemoteRooms(room) {
         if(canUseRemote(room, remoteName, settings.rooms[remoteName], settings)) {
             rooms.push({
                 name: remoteName,
-                memory: settings.rooms[remoteName]
+                memory: settings.rooms[remoteName],
+                blueFlag: hasBlueRemoteFlag(remoteName)
             });
         }
     }
 
     rooms.sort(function(a, b) {
+        if(a.blueFlag != b.blueFlag) {
+            return a.blueFlag ? -1 : 1;
+        }
+
         return (a.memory.distance || 1) - (b.memory.distance || 1) ||
             a.name.localeCompare(b.name);
     });
@@ -522,6 +538,7 @@ function getRoomReportLine(roomName, remoteName, remoteMemory) {
         '';
     var reason = remoteMemory.reason ? ' ' + remoteMemory.reason : '';
     var enabled = remoteMemory.enabled === false ? ' disabled' : '';
+    var blueFlag = hasBlueRemoteFlag(remoteName) ? ' blueFlag' : '';
     var homeRoom = Game.rooms[roomName];
     var homeMemory = Memory.rooms && Memory.rooms[roomName] ? Memory.rooms[roomName] : null;
     var settings = homeRoom ? getSettings(homeRoom) : (homeMemory ? homeMemory.remote : null);
@@ -537,6 +554,7 @@ function getRoomReportLine(roomName, remoteName, remoteMemory) {
         unsafe +
         reason +
         enabled +
+        blueFlag +
         decision;
 }
 
