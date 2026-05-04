@@ -813,6 +813,7 @@ function spawnRole(spawn, role, counts, targets, request) {
             'debugSpawn',
             spawn.name + ' waiting for energy to spawn ' +
                 (defenderType ? defenderType + ' ' : '') + role +
+                (request.memory && request.memory.targetRoom ? ' -> ' + request.memory.targetRoom : '') +
                 ' (' + spawn.room.energyAvailable + '/' + desiredCost + ')',
             5
         );

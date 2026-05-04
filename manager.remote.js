@@ -7,7 +7,8 @@ var DEFAULT_SETTINGS = {
     minHomeRcl: 3,
     minHaulEnergy: 300,
     staleRoomTicks: 1500,
-    unsafeRoomCooldown: 500
+    unsafeRoomCooldown: 500,
+    exitAccessCacheTicks: 100
 };
 
 function getSettings(room) {
@@ -110,6 +111,158 @@ function isAccessibleMapRoom(roomName) {
     return getMapRoomStatus(roomName) == 'normal';
 }
 
+function getPrimaryHomeAnchor(room) {
+    var spawns = room.find(FIND_MY_STRUCTURES, {
+        filter: function(structure) {
+            return structure.structureType == STRUCTURE_SPAWN;
+        }
+    });
+
+    return spawns[0] || room.controller || null;
+}
+
+function isPassableStructure(structure) {
+    if(structure.structureType == STRUCTURE_ROAD ||
+        structure.structureType == STRUCTURE_CONTAINER) {
+        return true;
+    }
+
+    return structure.structureType == STRUCTURE_RAMPART &&
+        (structure.my || structure.isPublic);
+}
+
+function addExitAccessCosts(room, costs) {
+    var structures = room.find(FIND_STRUCTURES);
+    for(var i = 0; i < structures.length; i++) {
+        if(structures[i].structureType == STRUCTURE_ROAD) {
+            costs.set(structures[i].pos.x, structures[i].pos.y, 1);
+            continue;
+        }
+
+        if(structures[i].structureType == STRUCTURE_CONTAINER ||
+            (structures[i].structureType == STRUCTURE_RAMPART &&
+            (structures[i].my || structures[i].isPublic))) {
+            costs.set(structures[i].pos.x, structures[i].pos.y, 2);
+            continue;
+        }
+
+        costs.set(structures[i].pos.x, structures[i].pos.y, 255);
+    }
+
+    var sites = room.find(FIND_CONSTRUCTION_SITES);
+    for(var j = 0; j < sites.length; j++) {
+        if(sites[j].structureType == STRUCTURE_ROAD) {
+            costs.set(sites[j].pos.x, sites[j].pos.y, 1);
+            continue;
+        }
+
+        if(sites[j].structureType == STRUCTURE_RAMPART && sites[j].my !== false) {
+            costs.set(sites[j].pos.x, sites[j].pos.y, 2);
+            continue;
+        }
+
+        if(sites[j].structureType == STRUCTURE_WALL) {
+            costs.set(sites[j].pos.x, sites[j].pos.y, 255);
+        }
+    }
+}
+
+function getExitFindConstant(direction) {
+    var value = parseInt(direction, 10);
+    if(value == FIND_EXIT_TOP ||
+        value == FIND_EXIT_RIGHT ||
+        value == FIND_EXIT_BOTTOM ||
+        value == FIND_EXIT_LEFT) {
+        return value;
+    }
+
+    return null;
+}
+
+function hasOpenExitTile(room, exitPositions) {
+    for(var i = 0; i < exitPositions.length; i++) {
+        if(room.getTerrain().get(exitPositions[i].x, exitPositions[i].y) == TERRAIN_MASK_WALL) {
+            continue;
+        }
+
+        var structures = exitPositions[i].lookFor(LOOK_STRUCTURES);
+        var blocked = false;
+        for(var j = 0; j < structures.length; j++) {
+            if(!isPassableStructure(structures[j])) {
+                blocked = true;
+                break;
+            }
+        }
+
+        if(!blocked) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function canReachExit(room, exitPositions) {
+    if(!exitPositions.length || typeof PathFinder === 'undefined') {
+        return exitPositions.length > 0;
+    }
+
+    var anchor = getPrimaryHomeAnchor(room);
+    if(!anchor) {
+        return true;
+    }
+
+    var goals = [];
+    for(var i = 0; i < exitPositions.length; i++) {
+        goals.push({
+            pos: exitPositions[i],
+            range: 0
+        });
+    }
+
+    var result = PathFinder.search(anchor.pos || anchor, goals, {
+        plainCost: 2,
+        swampCost: 10,
+        maxRooms: 1,
+        maxOps: 2000,
+        roomCallback: function(roomName) {
+            if(roomName != room.name) {
+                return false;
+            }
+
+            var costs = new PathFinder.CostMatrix();
+            addExitAccessCosts(room, costs);
+            return costs;
+        }
+    });
+
+    return !result.incomplete && result.path.length > 0;
+}
+
+function hasAccessibleExit(room, direction, remoteMemory, settings) {
+    if(!direction) {
+        return true;
+    }
+
+    var cacheTicks = typeof settings.exitAccessCacheTicks == 'number' ?
+        Math.max(1, settings.exitAccessCacheTicks) :
+        DEFAULT_SETTINGS.exitAccessCacheTicks;
+    if(remoteMemory.exitAccessChecked &&
+        remoteMemory.exitAccessible !== undefined &&
+        Game.time - remoteMemory.exitAccessChecked < cacheTicks) {
+        return remoteMemory.exitAccessible === true;
+    }
+
+    var findConstant = getExitFindConstant(direction);
+    var exitPositions = findConstant === null ? [] : room.find(findConstant);
+    var accessible = hasOpenExitTile(room, exitPositions) &&
+        canReachExit(room, exitPositions);
+
+    remoteMemory.exitAccessible = accessible;
+    remoteMemory.exitAccessChecked = Game.time;
+    return accessible;
+}
+
 function rememberAdjacentRooms(room, settings) {
     if(typeof Game.map.describeExits != 'function') {
         return;
@@ -135,9 +288,16 @@ function rememberAdjacentRooms(room, settings) {
             continue;
         }
 
+        if(!hasAccessibleExit(room, direction, settings.rooms[roomName], settings)) {
+            settings.rooms[roomName].status = 'blocked';
+            settings.rooms[roomName].reason = 'exit inaccessible';
+            continue;
+        }
+
         if(settings.rooms[roomName].status == 'blocked' &&
             settings.rooms[roomName].reason &&
-            settings.rooms[roomName].reason.indexOf('map status ') === 0) {
+            (settings.rooms[roomName].reason.indexOf('map status ') === 0 ||
+            settings.rooms[roomName].reason == 'exit inaccessible')) {
             settings.rooms[roomName].status = 'unknown';
             delete settings.rooms[roomName].reason;
         }
@@ -149,6 +309,12 @@ function updateVisibleRemoteRoom(homeRoom, remoteName, remoteMemory) {
     if(!isAccessibleMapRoom(remoteName)) {
         remoteMemory.status = 'blocked';
         remoteMemory.reason = 'map status ' + remoteMemory.mapStatus;
+        return;
+    }
+
+    if(remoteMemory.exitAccessible === false) {
+        remoteMemory.status = 'blocked';
+        remoteMemory.reason = 'exit inaccessible';
         return;
     }
 
@@ -210,6 +376,10 @@ function updateRemoteMemory(room) {
 
 function canUseRemote(room, remoteName, remoteMemory, settings) {
     if(!isAccessibleMapRoom(remoteName)) {
+        return false;
+    }
+
+    if(remoteMemory.exitAccessible === false) {
         return false;
     }
 
@@ -284,6 +454,10 @@ function getRemoteExplorationBlockers(room, remoteName, remoteMemory, settings) 
 
     if(!isAccessibleMapRoom(remoteName)) {
         blockers.push('map status ' + getMapRoomStatus(remoteName));
+    }
+
+    if(remoteMemory.exitAccessible === false) {
+        blockers.push('exit inaccessible');
     }
 
     if(remoteMemory.distance && remoteMemory.distance > settings.maxRooms) {
