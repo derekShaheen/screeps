@@ -267,14 +267,119 @@ function isEarlySpawnRoadOffset(dx, dy) {
 }
 
 function isReservedBaseRoadTile(room, pos) {
+    return !!getRoadIntentState(room).map[getPosKey(pos)];
+}
+
+function addRoadIntentPosition(room, state, pos) {
+    if(!pos || pos.roomName != room.name || getTerrain(room, pos.x, pos.y) == TERRAIN_MASK_WALL) {
+        return;
+    }
+
+    var key = getPosKey(pos);
+    if(state.map[key]) {
+        return;
+    }
+
+    state.map[key] = true;
+    state.positions.push(pos);
+}
+
+function addRoadIntentPath(room, state, path) {
+    for(var i = 0; i < path.length; i++) {
+        addRoadIntentPosition(room, state, path[i]);
+    }
+}
+
+function getRoadIntentState(room) {
+    if(room._roadIntentState &&
+        typeof Game !== 'undefined' &&
+        room._roadIntentState.time == Game.time) {
+        return room._roadIntentState.state;
+    }
+
+    var state = {
+        positions: [],
+        map: {}
+    };
     var spawns = getSpawns(room);
+    if(!spawns.length) {
+        return state;
+    }
+
+    var primary = spawns[0];
     for(var i = 0; i < spawns.length; i++) {
-        if(isReservedSpawnRoadOffset(pos.x - spawns[i].pos.x, pos.y - spawns[i].pos.y)) {
-            return true;
+        addRoadIntentPath(room, state, getSpawnRoadLoopPositions(room, spawns[i]));
+        addRoadIntentPath(room, state, getSpawnRoadSpokePositions(room, spawns[i]));
+    }
+
+    for(var s = 1; s < spawns.length; s++) {
+        addRoadIntentPath(room, state, getPath(room, primary.pos, spawns[s].pos, 1));
+    }
+
+    var baseTargets = getBaseRoadTargets(room);
+    for(var b = 0; b < baseTargets.length; b++) {
+        var nearestSpawn = getNearestSpawn(spawns, baseTargets[b].pos);
+        addRoadIntentPath(room, state, getPath(room, nearestSpawn.pos, baseTargets[b].pos, 1));
+    }
+
+    var sources = room.find(FIND_SOURCES);
+    for(var sourceIndex = 0; sourceIndex < sources.length; sourceIndex++) {
+        addRoadIntentPath(room, state, getPath(room, primary.pos, sources[sourceIndex].pos, 1));
+    }
+
+    if(room.controller) {
+        addRoadIntentPath(room, state, getPath(room, primary.pos, room.controller.pos, 2));
+    }
+
+    var exitTargets = getExitRampartRoadTargets(room);
+    for(var e = 0; e < exitTargets.length; e++) {
+        var nearestExitSpawn = getNearestSpawn(spawns, exitTargets[e].pos);
+        addRoadIntentPath(room, state, getPath(room, nearestExitSpawn.pos, exitTargets[e].pos, 0));
+    }
+
+    var roads = room.find(FIND_STRUCTURES, {
+        filter: function(structure) {
+            return structure.structureType == STRUCTURE_ROAD;
+        }
+    });
+    for(var r = 0; r < roads.length; r++) {
+        addRoadIntentPosition(room, state, roads[r].pos);
+    }
+
+    var roadSites = room.find(FIND_CONSTRUCTION_SITES, {
+        filter: function(site) {
+            return site.structureType == STRUCTURE_ROAD;
+        }
+    });
+    for(var c = 0; c < roadSites.length; c++) {
+        addRoadIntentPosition(room, state, roadSites[c].pos);
+    }
+
+    if(typeof Game !== 'undefined') {
+        room._roadIntentState = {
+            time: Game.time,
+            state: state
+        };
+    }
+
+    return state;
+}
+
+function getRoadIntentRange(room, pos) {
+    var state = getRoadIntentState(room);
+    var best = 999;
+    for(var i = 0; i < state.positions.length; i++) {
+        best = Math.min(best, pos.getRangeTo(state.positions[i]));
+        if(best <= 1) {
+            return best;
         }
     }
 
-    return false;
+    return best;
+}
+
+function isNearRoadIntent(room, pos, range) {
+    return getRoadIntentRange(room, pos) <= range;
 }
 
 function canReplanRoadBlocker(structure) {
@@ -326,6 +431,11 @@ function sortCoreCandidates(room, candidates, structureType) {
         var aScore = aSwamp + aRoadShape;
         var bScore = bSwamp + bRoadShape;
 
+        if(structureType == STRUCTURE_EXTENSION) {
+            aScore += getRoadIntentRange(room, a) * 2;
+            bScore += getRoadIntentRange(room, b) * 2;
+        }
+
         if(spawn) {
             aScore += a.getRangeTo(spawn);
             bScore += b.getRangeTo(spawn);
@@ -357,6 +467,10 @@ function planCoreStructure(room, structureType, minRange, maxRange, remaining) {
 
     for(var i = 0; i < candidates.length && placed < remaining && placed < needed; i++) {
         if(isReservedBaseRoadTile(room, candidates[i])) {
+            continue;
+        }
+
+        if(structureType == STRUCTURE_EXTENSION && !isNearRoadIntent(room, candidates[i], 2)) {
             continue;
         }
 
@@ -812,6 +926,36 @@ function getSpawnRoadLoopPositions(room, spawn) {
     return positions;
 }
 
+function getSpawnRoadSpokePositions(room, spawn) {
+    var positions = [];
+    var directions = [
+        [0, -1],
+        [1, 0],
+        [0, 1],
+        [-1, 0]
+    ];
+
+    for(var i = 0; i < directions.length; i++) {
+        for(var range = 2; range <= 5; range++) {
+            var x = spawn.pos.x + directions[i][0] * range;
+            var y = spawn.pos.y + directions[i][1] * range;
+            if(x <= 1 || x >= 48 || y <= 1 || y >= 48) {
+                break;
+            }
+
+            var pos = new RoomPosition(x, y, room.name);
+            if(!isCoreBuildTile(room, pos) ||
+                (hasBlockingStructure(pos, STRUCTURE_ROAD) && !hasStructure(pos, STRUCTURE_ROAD))) {
+                break;
+            }
+
+            positions.push(pos);
+        }
+    }
+
+    return positions;
+}
+
 function getEarlySpawnRoadPositions(room, spawn) {
     var positions = [];
     for(var dx = -1; dx <= 1; dx++) {
@@ -854,6 +998,27 @@ function planSpawnRoadLoops(room, spawns, remaining) {
         debug.log(
             'debugConstruction',
             room.name + ' planned ' + placed + ' spawn circulation road site(s)',
+            1
+        );
+    }
+
+    return placed;
+}
+
+function planSpawnRoadSpokes(room, spawns, remaining) {
+    var placed = 0;
+    for(var i = 0; i < spawns.length && placed < remaining; i++) {
+        placed += planRoadPositions(
+            room,
+            getSpawnRoadSpokePositions(room, spawns[i]),
+            remaining - placed
+        );
+    }
+
+    if(placed > 0) {
+        debug.log(
+            'debugConstruction',
+            room.name + ' planned ' + placed + ' spawn road spoke site(s)',
             1
         );
     }
@@ -1027,6 +1192,10 @@ function planRoads(room, remaining) {
     var spawn = spawns[0];
 
     placed += planSpawnRoadLoops(room, spawns, remaining - placed);
+
+    if(placed < remaining) {
+        placed += planSpawnRoadSpokes(room, spawns, remaining - placed);
+    }
 
     if(placed < remaining) {
         placed += planSpawnLinks(room, spawns, remaining - placed);
@@ -2174,6 +2343,10 @@ function getFutureCoreSlots(room, structureType, minRange, maxRange, limit) {
             continue;
         }
 
+        if(structureType == STRUCTURE_EXTENSION && !isNearRoadIntent(room, candidates[i], 2)) {
+            continue;
+        }
+
         if(canCreateSite(room, candidates[i], structureType)) {
             slots.push(candidates[i]);
         }
@@ -2194,6 +2367,10 @@ function getFutureAnchoredSlots(room, structureType, anchorPos, minRange, maxRan
 
     for(var i = 0; i < candidates.length && slots.length < missing; i++) {
         if(isReservedBaseRoadTile(room, candidates[i])) {
+            continue;
+        }
+
+        if(structureType == STRUCTURE_EXTENSION && !isNearRoadIntent(room, candidates[i], 2)) {
             continue;
         }
 
@@ -2260,6 +2437,7 @@ function drawRoadPlannerVisuals(room, settings) {
     var primary = spawns[0];
     for(var i = 0; i < spawns.length; i++) {
         drawPlannerPath(room, getSpawnRoadLoopPositions(room, spawns[i]), '#66ccff');
+        drawPlannerPath(room, getSpawnRoadSpokePositions(room, spawns[i]), '#66ccff');
     }
 
     for(var s = 1; s < spawns.length; s++) {
