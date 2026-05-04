@@ -8,7 +8,8 @@ var DEFAULT_SETTINGS = {
     minHaulEnergy: 300,
     staleRoomTicks: 1500,
     unsafeRoomCooldown: 500,
-    exitAccessCacheTicks: 100
+    exitAccessCacheTicks: 100,
+    priorityFlagName: 'Flag1'
 };
 
 function getSettings(room) {
@@ -122,15 +123,13 @@ function isAccessibleRemoteMapRoom(homeRoomName, remoteRoomName) {
         getMapRoomStatus(homeRoomName) == 'novice';
 }
 
-function hasBlueRemoteFlag(roomName) {
-    for(var flagName in Game.flags) {
-        var flag = Game.flags[flagName];
-        if(flag.pos.roomName == roomName && flag.color == COLOR_BLUE) {
-            return true;
-        }
-    }
+function hasPriorityRemoteFlag(roomName, settings) {
+    var flagName = settings && settings.priorityFlagName ?
+        settings.priorityFlagName :
+        DEFAULT_SETTINGS.priorityFlagName;
+    var flag = Game.flags[flagName];
 
-    return false;
+    return !!flag && flag.pos.roomName == roomName;
 }
 
 function getPrimaryHomeAnchor(room) {
@@ -510,14 +509,14 @@ function getActiveRemoteRooms(room) {
             rooms.push({
                 name: remoteName,
                 memory: settings.rooms[remoteName],
-                blueFlag: hasBlueRemoteFlag(remoteName)
+                priorityFlag: hasPriorityRemoteFlag(remoteName, settings)
             });
         }
     }
 
     rooms.sort(function(a, b) {
-        if(a.blueFlag != b.blueFlag) {
-            return a.blueFlag ? -1 : 1;
+        if(a.priorityFlag != b.priorityFlag) {
+            return a.priorityFlag ? -1 : 1;
         }
 
         return (a.memory.distance || 1) - (b.memory.distance || 1) ||
@@ -538,10 +537,12 @@ function getRoomReportLine(roomName, remoteName, remoteMemory) {
         '';
     var reason = remoteMemory.reason ? ' ' + remoteMemory.reason : '';
     var enabled = remoteMemory.enabled === false ? ' disabled' : '';
-    var blueFlag = hasBlueRemoteFlag(remoteName) ? ' blueFlag' : '';
     var homeRoom = Game.rooms[roomName];
     var homeMemory = Memory.rooms && Memory.rooms[roomName] ? Memory.rooms[roomName] : null;
     var settings = homeRoom ? getSettings(homeRoom) : (homeMemory ? homeMemory.remote : null);
+    var priorityFlag = hasPriorityRemoteFlag(remoteName, settings) ?
+        ' priorityFlag=' + (settings.priorityFlagName || DEFAULT_SETTINGS.priorityFlagName) :
+        '';
     var blockers = settings ? getRemoteExplorationBlockers(homeRoom, remoteName, remoteMemory, settings) : ['remote memory missing'];
     var decision = blockers.length ? ' blockedBy=' + blockers.join(', ') : ' eligible';
 
@@ -554,7 +555,7 @@ function getRoomReportLine(roomName, remoteName, remoteMemory) {
         unsafe +
         reason +
         enabled +
-        blueFlag +
+        priorityFlag +
         decision;
 }
 
