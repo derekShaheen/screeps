@@ -1676,6 +1676,18 @@ function planControllerLink(room, remaining) {
     return planAnchoredStructure(room, STRUCTURE_LINK, room.controller.pos, 2, 4, Math.min(remaining, 1));
 }
 
+function planStorageLink(room, remaining) {
+    var anchor = getStorage(room) || getPrimarySpawn(room);
+    if(remaining <= 0 ||
+        !needsMore(room, STRUCTURE_LINK) ||
+        !anchor ||
+        hasLinkNear(anchor.pos, 3)) {
+        return 0;
+    }
+
+    return planAnchoredStructure(room, STRUCTURE_LINK, anchor.pos, 1, 3, Math.min(remaining, 1));
+}
+
 function planSourceLinks(room, remaining) {
     if(remaining <= 0 || !needsMore(room, STRUCTURE_LINK)) {
         return 0;
@@ -1721,6 +1733,10 @@ function planLinks(room, remaining) {
     }
 
     var placed = planControllerLink(room, remaining);
+    if(placed < remaining) {
+        placed += planStorageLink(room, remaining - placed);
+    }
+
     if(placed < remaining) {
         placed += planSourceLinks(room, remaining - placed);
     }
@@ -2807,6 +2823,17 @@ function drawFutureBuildingPlannerVisuals(room, settings) {
                 visualPositions,
                 seen,
                 getFutureAnchoredSlots(room, STRUCTURE_LINK, room.controller.pos, 2, 4, 1),
+                STRUCTURE_LINK,
+                limitState
+            );
+        }
+
+        var linkAnchor = getStorage(room) || getPrimarySpawn(room);
+        if(linkAnchor && !hasLinkNear(linkAnchor.pos, 3)) {
+            addFutureSlots(
+                visualPositions,
+                seen,
+                getFutureAnchoredSlots(room, STRUCTURE_LINK, linkAnchor.pos, 1, 3, 1),
                 STRUCTURE_LINK,
                 limitState
             );
