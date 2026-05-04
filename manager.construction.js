@@ -904,6 +904,51 @@ function getBaseRoadTargets(room) {
     return targets;
 }
 
+function isExitSealRoadTargetPos(pos) {
+    return pos.x <= 2 || pos.x >= 47 || pos.y <= 2 || pos.y >= 47;
+}
+
+function addExitRampartRoadTarget(room, targets, seen, pos) {
+    if(!pos || pos.roomName != room.name || !isExitSealRoadTargetPos(pos)) {
+        return;
+    }
+
+    if(getTerrain(room, pos.x, pos.y) == TERRAIN_MASK_WALL) {
+        return;
+    }
+
+    var key = getPosKey(pos);
+    if(seen[key]) {
+        return;
+    }
+
+    seen[key] = true;
+    targets.push({pos: pos});
+}
+
+function getExitRampartRoadTargets(room) {
+    var targets = [];
+    var seen = {};
+    var segments = groupExitSegments(room);
+
+    for(var i = 0; i < segments.length; i++) {
+        var plan = getExitSealPlan(room, segments[i]);
+        var gatePos = getExitSealPos(room, plan.side, plan.gate);
+        for(var j = 0; j < plan.positions.length; j++) {
+            if(plan.positions[j].structureType == STRUCTURE_RAMPART) {
+                addExitRampartRoadTarget(room, targets, seen, plan.positions[j].pos);
+            }
+        }
+
+        if(hasStructure(gatePos, STRUCTURE_RAMPART) ||
+            hasConstructionSite(gatePos, STRUCTURE_RAMPART)) {
+            addExitRampartRoadTarget(room, targets, seen, gatePos);
+        }
+    }
+
+    return targets;
+}
+
 function planSpawnLinks(room, spawns, remaining) {
     if(spawns.length <= 1 || remaining <= 0) {
         return 0;
@@ -939,6 +984,35 @@ function planBaseAccessRoads(room, spawns, remaining) {
     return placed;
 }
 
+function planExitRampartAccessRoads(room, spawns, remaining) {
+    if(remaining <= 0 || !spawns.length) {
+        return 0;
+    }
+
+    var placed = 0;
+    var targets = getExitRampartRoadTargets(room);
+    var primary = spawns[0];
+
+    targets.sort(function(a, b) {
+        return a.pos.getRangeTo(primary) - b.pos.getRangeTo(primary);
+    });
+
+    for(var i = 0; i < targets.length && placed < remaining; i++) {
+        var nearestSpawn = getNearestSpawn(spawns, targets[i].pos);
+        placed += planRoadPath(room, nearestSpawn.pos, targets[i].pos, 0, remaining - placed);
+    }
+
+    if(placed > 0) {
+        debug.log(
+            'debugConstruction',
+            room.name + ' planned ' + placed + ' exit rampart access road site(s)',
+            1
+        );
+    }
+
+    return placed;
+}
+
 function planRoads(room, remaining) {
     if(remaining <= 0) {
         return 0;
@@ -969,6 +1043,10 @@ function planRoads(room, remaining) {
 
     if(room.controller && placed < remaining) {
         placed += planRoadPath(room, spawn.pos, room.controller.pos, 2, remaining - placed);
+    }
+
+    if(placed < remaining) {
+        placed += planExitRampartAccessRoads(room, spawns, remaining - placed);
     }
 
     return placed;
@@ -2201,6 +2279,12 @@ function drawRoadPlannerVisuals(room, settings) {
 
     if(room.controller) {
         drawPlannerPath(room, getPath(room, primary.pos, room.controller.pos, 2), '#66ccff');
+    }
+
+    var exitTargets = getExitRampartRoadTargets(room);
+    for(var e = 0; e < exitTargets.length; e++) {
+        var nearestExitSpawn = getNearestSpawn(spawns, exitTargets[e].pos);
+        drawPlannerPath(room, getPath(room, nearestExitSpawn.pos, exitTargets[e].pos, 0), '#66ccff');
     }
 }
 
