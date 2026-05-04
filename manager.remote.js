@@ -111,6 +111,17 @@ function isAccessibleMapRoom(roomName) {
     return getMapRoomStatus(roomName) == 'normal';
 }
 
+function isAccessibleRemoteMapRoom(homeRoomName, remoteRoomName) {
+    var remoteStatus = getMapRoomStatus(remoteRoomName);
+    if(remoteStatus == 'normal') {
+        return true;
+    }
+
+    return !!homeRoomName &&
+        remoteStatus == 'novice' &&
+        getMapRoomStatus(homeRoomName) == 'novice';
+}
+
 function getPrimaryHomeAnchor(room) {
     var spawns = room.find(FIND_MY_STRUCTURES, {
         filter: function(structure) {
@@ -282,7 +293,7 @@ function rememberAdjacentRooms(room, settings) {
 
         settings.rooms[roomName].exit = direction;
         settings.rooms[roomName].mapStatus = mapStatus;
-        if(!isAccessibleMapRoom(roomName)) {
+        if(!isAccessibleRemoteMapRoom(room.name, roomName)) {
             settings.rooms[roomName].status = 'blocked';
             settings.rooms[roomName].reason = 'map status ' + mapStatus;
             continue;
@@ -306,7 +317,7 @@ function rememberAdjacentRooms(room, settings) {
 
 function updateVisibleRemoteRoom(homeRoom, remoteName, remoteMemory) {
     remoteMemory.mapStatus = getMapRoomStatus(remoteName);
-    if(!isAccessibleMapRoom(remoteName)) {
+    if(!isAccessibleRemoteMapRoom(homeRoom.name, remoteName)) {
         remoteMemory.status = 'blocked';
         remoteMemory.reason = 'map status ' + remoteMemory.mapStatus;
         return;
@@ -375,7 +386,7 @@ function updateRemoteMemory(room) {
 }
 
 function canUseRemote(room, remoteName, remoteMemory, settings) {
-    if(!isAccessibleMapRoom(remoteName)) {
+    if(!isAccessibleRemoteMapRoom(room.name, remoteName)) {
         return false;
     }
 
@@ -452,7 +463,11 @@ function getRemoteExplorationBlockers(room, remoteName, remoteMemory, settings) 
         blockers.push('remote disabled');
     }
 
-    if(!isAccessibleMapRoom(remoteName)) {
+    var mapAccessible = room ?
+        isAccessibleRemoteMapRoom(room.name, remoteName) :
+        isAccessibleMapRoom(remoteName);
+
+    if(!mapAccessible) {
         blockers.push('map status ' + getMapRoomStatus(remoteName));
     }
 
