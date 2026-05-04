@@ -108,7 +108,7 @@ function canBuildRemoteInfrastructure(creep) {
 function chooseSource(creep) {
     if(creep.memory.sourceId) {
         var remembered = Game.getObjectById(creep.memory.sourceId);
-        if(remembered) {
+        if(remembered && remembered.pos.roomName == creep.room.name) {
             return remembered;
         }
 
@@ -262,7 +262,37 @@ function mineToContainer(creep, source, container) {
         return true;
     }
 
+    if(harvestResult == ERR_NOT_ENOUGH_RESOURCES) {
+        return waitForSourceRegen(creep, source);
+    }
+
+    debug.log(
+        'debugRoles',
+        creep.name + ' remote container harvest failed at ' +
+            formatPos(source.pos) +
+            ' result=' + harvestResult +
+            ' carry=' + creep.store[RESOURCE_ENERGY] + '/' +
+            creep.store.getCapacity(RESOURCE_ENERGY) +
+            ' workParts=' + creep.getActiveBodyparts(WORK),
+        3
+    );
+
     return false;
+}
+
+function waitForSourceRegen(creep, source) {
+    var ticks = typeof source.ticksToRegeneration == 'number' ?
+        source.ticksToRegeneration :
+        '?';
+
+    debug.log(
+        'debugRoles',
+        creep.name + ' waiting for remote source regen at ' +
+            formatPos(source.pos) + ' ticks=' + ticks,
+        10
+    );
+    creepUtils.announceIntent(creep, 'action:remoteWaitSource', 'wait');
+    return true;
 }
 
 function mineLoose(creep, source) {
@@ -288,6 +318,21 @@ function mineLoose(creep, source) {
         creepUtils.announceIntent(creep, 'action:remoteHarvest', 'mine');
         return true;
     }
+
+    if(result == ERR_NOT_ENOUGH_RESOURCES) {
+        return waitForSourceRegen(creep, source);
+    }
+
+    debug.log(
+        'debugRoles',
+        creep.name + ' remote harvest failed at ' +
+            formatPos(source.pos) +
+            ' result=' + result +
+            ' carry=' + creep.store[RESOURCE_ENERGY] + '/' +
+            creep.store.getCapacity(RESOURCE_ENERGY) +
+            ' workParts=' + creep.getActiveBodyparts(WORK),
+        3
+    );
 
     return false;
 }
