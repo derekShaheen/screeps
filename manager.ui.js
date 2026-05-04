@@ -1,6 +1,21 @@
 var debug = require('utils.debug');
 var spawnManager = require('manager.spawn');
 
+var STARTUP_KEY = createStartupKey();
+
+function createStartupKey() {
+    var tickPart = typeof Game != 'undefined' && Game.time !== undefined ?
+        Game.time.toString(36) :
+        'local';
+    var randomPart = Math.floor(Math.random() * 1679616).toString(36);
+
+    while(randomPart.length < 4) {
+        randomPart = '0' + randomPart;
+    }
+
+    return tickPart + '-' + randomPart;
+}
+
 function formatProgress(controller) {
     if(!controller || !controller.progressTotal) {
         return '0%';
@@ -171,7 +186,7 @@ var uiManager = {
         var wallTarget = room.memory.wallTargetHits || 1000;
 
         var lines = [
-            '[Creepworks]',
+            'Creepworks [' + STARTUP_KEY + ']',
             'Energy: ' + room.energyAvailable + ' / ' + room.energyCapacityAvailable,
             'RCL: ' + rcl + ' | ' + formatProgress(controller),
             'Creeps: H ' + counts.harvester + '/' + targets.harvester +
