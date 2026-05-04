@@ -48,7 +48,7 @@ var debug = {
             return;
         }
 
-        console.log('[StartupAI][' + flag + '] ' + message);
+        console.log('[Creepworks][' + flag + '] ' + message);
     },
 
     roleState: function(creep, state) {

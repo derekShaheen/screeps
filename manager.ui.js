@@ -171,7 +171,7 @@ var uiManager = {
         var wallTarget = room.memory.wallTargetHits || 1000;
 
         var lines = [
-            '[Startup AI]',
+            '[Creepworks]',
             'Energy: ' + room.energyAvailable + ' / ' + room.energyCapacityAvailable,
             'RCL: ' + rcl + ' | ' + formatProgress(controller),
             'Creeps: H ' + counts.harvester + '/' + targets.harvester +
