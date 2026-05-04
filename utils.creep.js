@@ -80,6 +80,111 @@ function getStuckTicks(creep) {
     return creep.memory.moveState.stuckTicks || 0;
 }
 
+function hasActiveMovePart(creep) {
+    return !creep.getActiveBodyparts || creep.getActiveBodyparts(MOVE) > 0;
+}
+
+function isRecentMoveIntent(creep) {
+    return creep.memory.intentKey &&
+        creep.memory.intentKey.indexOf('move:') === 0 &&
+        creep.memory.intentTick &&
+        Game.time - creep.memory.intentTick <= 1;
+}
+
+function getPathRange(target) {
+    return target && target.pos ? 1 : 0;
+}
+
+function getNextPathStep(creep, target) {
+    var targetPos = getMoveTargetPos(target);
+    if(!targetPos || targetPos.roomName != creep.room.name) {
+        return null;
+    }
+
+    if(creep.pos.inRangeTo(targetPos, getPathRange(target))) {
+        return null;
+    }
+
+    var path = creep.pos.findPathTo(targetPos, {
+        ignoreCreeps: true,
+        range: getPathRange(target),
+        maxOps: 200
+    });
+
+    if(!path.length) {
+        return null;
+    }
+
+    return new RoomPosition(path[0].x, path[0].y, creep.room.name);
+}
+
+function findFriendlyCreepAt(pos, exceptName) {
+    var creeps = pos.lookFor(LOOK_CREEPS);
+    for(var i = 0; i < creeps.length; i++) {
+        if(creeps[i].my && creeps[i].name != exceptName) {
+            return creeps[i];
+        }
+    }
+
+    return null;
+}
+
+function canPassThrough(creep, blocker) {
+    if(!blocker ||
+        blocker.spawning ||
+        blocker.fatigue > 0 ||
+        !hasActiveMovePart(blocker) ||
+        blocker.memory.passThroughMovedTick == Game.time) {
+        return false;
+    }
+
+    return isRecentMoveIntent(blocker);
+}
+
+function tryPassThrough(creep, target, stuckTicks) {
+    if(stuckTicks < 1 ||
+        creep.fatigue > 0 ||
+        !hasActiveMovePart(creep)) {
+        return false;
+    }
+
+    var nextStep = getNextPathStep(creep, target);
+    if(!nextStep) {
+        return false;
+    }
+
+    var blocker = findFriendlyCreepAt(nextStep, creep.name);
+    if(!canPassThrough(creep, blocker)) {
+        return false;
+    }
+
+    var blockerDirection = blocker.pos.getDirectionTo(creep.pos);
+    var creepDirection = creep.pos.getDirectionTo(blocker.pos);
+    var blockerResult = blocker.move(blockerDirection);
+    if(blockerResult != OK) {
+        return false;
+    }
+
+    var creepResult = creep.move(creepDirection);
+    if(creepResult != OK) {
+        return false;
+    }
+
+    blocker.memory.passThroughMovedTick = Game.time;
+    blocker.memory.passThroughPartner = creep.name;
+    creep.memory.passThroughMovedTick = Game.time;
+    creep.memory.passThroughPartner = blocker.name;
+
+    debug.log(
+        'debugRoles',
+        creep.name + ' passing through ' + blocker.name +
+            ' at ' + nextStep.roomName + ':' + nextStep.x + ',' + nextStep.y,
+        5
+    );
+
+    return true;
+}
+
 function isWalkableMovePosition(creep, pos) {
     if(pos.x <= 0 || pos.x >= 49 || pos.y <= 0 || pos.y >= 49) {
         return false;
@@ -149,12 +254,20 @@ function findStepAsidePosition(creep, target) {
 }
 
 function moveTo(creep, target, stroke, intentMessage, intentKey) {
+    if(creep.memory.passThroughMovedTick == Game.time) {
+        return OK;
+    }
+
     announceIntent(creep, intentKey || ('move:' + intentMessage), intentMessage);
 
     var stuckTicks = updateStuckState(creep, target);
     var options = {
         reusePath: 5
     };
+
+    if(tryPassThrough(creep, target, stuckTicks)) {
+        return OK;
+    }
 
     if(stuckTicks >= 2) {
         options.reusePath = 0;
