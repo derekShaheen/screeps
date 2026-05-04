@@ -43,7 +43,7 @@ var DEFAULT_ROOM_MEMORY = {
         autoExtractor: true,
         autoTerminal: true,
         autoLabs: true,
-        autoRamparts: true,
+        autoRamparts: false,
         autoExitWalls: true,
         autoWallTargetHits: true,
         maxTotalSites: 20,

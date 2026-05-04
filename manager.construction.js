@@ -1357,16 +1357,15 @@ function shouldPrioritizeDefense(room, settings) {
         return false;
     }
 
-    if(settings.autoRamparts === false && settings.autoExitWalls === false) {
+    if(settings.autoExitWalls === false) {
         return false;
     }
 
-    if(settings.autoExitWalls !== false && !areExitWallsSealed(room)) {
+    if(!areExitWallsSealed(room)) {
         return true;
     }
 
-    var minDefenseSites = settings.minDefenseSites || 4;
-    return countDefenseStructuresAndSites(room) < minDefenseSites;
+    return false;
 }
 
 function countInfrastructureConstructionSites(room) {
@@ -1497,13 +1496,13 @@ function planInfrastructure(room, settings, totalBudget) {
     return placed;
 }
 
-function removeObsoleteInnerRampartSites(room) {
+function removeObsoleteRampartSites(room) {
     var removed = 0;
     var sites = room.find(FIND_CONSTRUCTION_SITES, {
         filter: function(site) {
             return site.structureType == STRUCTURE_RAMPART &&
                 site.my !== false &&
-                defenseUtils.isObsoleteInnerRampartPosition(room, site.pos);
+                !defenseUtils.shouldBuildConstructionSite(site);
         }
     });
 
@@ -1513,114 +1512,13 @@ function removeObsoleteInnerRampartSites(room) {
             removed++;
             debug.log(
                 'debugConstruction',
-                room.name + ' removed obsolete inner rampart site at ' + formatPos(sites[i].pos),
+                room.name + ' removed obsolete rampart site at ' + formatPos(sites[i].pos),
                 1
             );
         }
     }
 
     return removed;
-}
-
-function planSpawnAreaRamparts(room, remaining) {
-    var placed = 0;
-    var plan = defenseUtils.getSpawnAreaRampartPlan(room);
-    if(!plan) {
-        return placed;
-    }
-
-    var positions = plan.positions.slice();
-    positions.sort(function(a, b) {
-        var spawn = plan.spawn;
-        var aScore = spawn ? a.getRangeTo(spawn) : 0;
-        var bScore = spawn ? b.getRangeTo(spawn) : 0;
-
-        if(room.controller) {
-            aScore += a.getRangeTo(room.controller) * 0.1;
-            bScore += b.getRangeTo(room.controller) * 0.1;
-        }
-
-        return aScore - bScore;
-    });
-
-    for(var i = 0; i < positions.length && placed < remaining; i++) {
-        var result = createSite(room, positions[i], STRUCTURE_RAMPART);
-        if(result == OK) {
-            placed++;
-        }
-
-        if(result == ERR_FULL) {
-            break;
-        }
-    }
-
-    if(placed > 0) {
-        debug.log(
-            'debugConstruction',
-            room.name + ' planned ' + placed + ' spawn area perimeter rampart site(s)',
-            1
-        );
-    }
-
-    return placed;
-}
-
-function planCorePerimeterDefense(room, remaining) {
-    var placed = 0;
-    var spawn = getPrimarySpawn(room);
-    if(!spawn) {
-        return placed;
-    }
-
-    var candidates = [];
-    for(var range = 1; range <= 2; range++) {
-        for(var dx = -range; dx <= range; dx++) {
-            for(var dy = -range; dy <= range; dy++) {
-                if(Math.max(Math.abs(dx), Math.abs(dy)) != range) {
-                    continue;
-                }
-
-                var x = spawn.pos.x + dx;
-                var y = spawn.pos.y + dy;
-                if(x <= 1 || x >= 48 || y <= 1 || y >= 48) {
-                    continue;
-                }
-
-                var pos = new RoomPosition(x, y, room.name);
-                if(isCoreBuildTile(room, pos)) {
-                    candidates.push(pos);
-                }
-            }
-        }
-    }
-
-    candidates.sort(function(a, b) {
-        var controller = room.controller;
-        var aScore = controller ? a.getRangeTo(controller) : 0;
-        var bScore = controller ? b.getRangeTo(controller) : 0;
-        return aScore - bScore;
-    });
-
-    for(var i = 0; i < candidates.length && placed < remaining; i++) {
-        var result = createSite(room, candidates[i], STRUCTURE_RAMPART);
-        if(result == OK) {
-            placed++;
-        }
-
-        if(result == ERR_FULL) {
-            break;
-        }
-    }
-
-    if(placed > 0) {
-        debug.log(
-            'debugConstruction',
-            room.name + ' planned ' + placed + ' fallback core defense site(s)',
-            1
-        );
-    }
-
-    return placed;
 }
 
 function getExitSide(pos) {
@@ -2043,8 +1941,10 @@ function planDefense(room, settings, totalBudget) {
 
     var maxDefenseSites = settings.maxDefenseSites || 12;
     var maxNewSites = settings.maxNewDefenseSitesPerTick || 3;
-    var existingDefenseSites = countDefenseConstructionSites(room);
     var siteBudget = totalBudget === undefined ? maxNewSites : Math.min(maxNewSites, totalBudget);
+
+    removeObsoleteRampartSites(room);
+    var existingDefenseSites = countDefenseConstructionSites(room);
 
     if(existingDefenseSites >= maxDefenseSites || siteBudget <= 0) {
         debug.log(
@@ -2057,26 +1957,15 @@ function planDefense(room, settings, totalBudget) {
 
     var remaining = Math.min(siteBudget, maxDefenseSites - existingDefenseSites);
     var placed = 0;
-    var plannedSpawnAreaRamparts = false;
-
-    if(settings.autoRamparts !== false) {
-        removeObsoleteInnerRampartSites(room);
-        plannedSpawnAreaRamparts = !!defenseUtils.getSpawnAreaRampartPlan(room);
-        placed += planSpawnAreaRamparts(room, remaining - placed);
-    }
 
     if(settings.autoExitWalls !== false && placed < remaining) {
         placed += planExitWalls(room, remaining - placed);
     }
 
-    if(placed === 0 && placed < remaining && !plannedSpawnAreaRamparts) {
-        placed += planCorePerimeterDefense(room, remaining - placed);
-    }
-
     if(placed > 0) {
         debug.log('debugConstruction', room.name + ' placed ' + placed + ' defense construction sites', 1);
     }
-    else if((settings.autoRamparts !== false || settings.autoExitWalls !== false) &&
+    else if(settings.autoExitWalls !== false &&
         room.memory.exitWallsSealed !== true) {
         debug.log(
             'debugConstruction',
@@ -2315,21 +2204,6 @@ function drawRoadPlannerVisuals(room, settings) {
     }
 }
 
-function drawRampartPlannerVisuals(room, settings) {
-    if(settings.autoRamparts === false) {
-        return;
-    }
-
-    var plan = defenseUtils.getSpawnAreaRampartPlan(room);
-    if(!plan) {
-        return;
-    }
-
-    for(var i = 0; i < plan.positions.length; i++) {
-        drawPlannerSlot(room, plan.positions[i], STRUCTURE_RAMPART, 0.13);
-    }
-}
-
 function drawFutureBuildingPlannerVisuals(room, settings) {
     var visualPositions = [];
     var seen = {};
@@ -2456,7 +2330,7 @@ function drawPlannerLegend(room, settings) {
         'dashed square: construction site',
         'circle/label: planned slot',
         'blue: road intent',
-        'green: rampart perimeter',
+        'green: rampart/gate',
         'limit: ' + (settings.debugPlannerVisualLimit || 120)
     ];
 
@@ -2484,7 +2358,6 @@ function drawConstructionPlannerVisuals(room, settings) {
 
     drawAllocatedPlannerObjects(room);
     drawRoadPlannerVisuals(room, settings);
-    drawRampartPlannerVisuals(room, settings);
     drawFutureBuildingPlannerVisuals(room, settings);
     drawPlannerLegend(room, settings);
 }

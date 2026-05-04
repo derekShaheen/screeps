@@ -193,12 +193,30 @@ function isObsoleteInnerRampartPosition(room, pos) {
     return isInsideBounds(pos, plan.bounds);
 }
 
+function isExitSealAreaPosition(pos) {
+    return pos.x <= 2 || pos.x >= 47 || pos.y <= 2 || pos.y >= 47;
+}
+
+function isSpawnAreaRampartPosition(room, pos) {
+    if(isExitSealAreaPosition(pos)) {
+        return false;
+    }
+
+    var plan = getSpawnAreaRampartPlan(room);
+    if(!plan) {
+        return false;
+    }
+
+    return !!plan.map[getPosKey(pos)];
+}
+
 function shouldMaintainDefenseStructure(structure) {
     if(structure.structureType != STRUCTURE_RAMPART) {
         return true;
     }
 
-    return !isObsoleteInnerRampartPosition(structure.room, structure.pos);
+    return !isSpawnAreaRampartPosition(structure.room, structure.pos) &&
+        !isObsoleteInnerRampartPosition(structure.room, structure.pos);
 }
 
 function shouldBuildConstructionSite(site) {
@@ -206,11 +224,13 @@ function shouldBuildConstructionSite(site) {
         return true;
     }
 
-    return !isObsoleteInnerRampartPosition(site.room, site.pos);
+    return !isSpawnAreaRampartPosition(site.room, site.pos) &&
+        !isObsoleteInnerRampartPosition(site.room, site.pos);
 }
 
 module.exports = {
     getSpawnAreaRampartPlan: getSpawnAreaRampartPlan,
+    isSpawnAreaRampartPosition: isSpawnAreaRampartPosition,
     isObsoleteInnerRampartPosition: isObsoleteInnerRampartPosition,
     shouldBuildConstructionSite: shouldBuildConstructionSite,
     shouldMaintainDefenseStructure: shouldMaintainDefenseStructure
