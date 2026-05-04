@@ -336,6 +336,12 @@ function getRoadIntentState(room) {
         addRoadIntentPath(room, state, getPath(room, nearestSpawn.pos, baseTargets[b].pos, 1));
     }
 
+    var extractorTargets = getExtractorRoadTargets(room);
+    for(var extractorIndex = 0; extractorIndex < extractorTargets.length; extractorIndex++) {
+        var nearestExtractorSpawn = getNearestSpawn(spawns, extractorTargets[extractorIndex].pos);
+        addRoadIntentPath(room, state, getPath(room, nearestExtractorSpawn.pos, extractorTargets[extractorIndex].pos, 1));
+    }
+
     var sources = room.find(FIND_SOURCES);
     for(var sourceIndex = 0; sourceIndex < sources.length; sourceIndex++) {
         addRoadIntentPath(room, state, getPath(room, primary.pos, sources[sourceIndex].pos, 1));
@@ -1209,6 +1215,44 @@ function getBaseRoadTargets(room) {
     return targets;
 }
 
+function getExtractorRoadTargets(room) {
+    var targets = [];
+    var structures = room.find(FIND_MY_STRUCTURES, {
+        filter: function(structure) {
+            return structure.structureType == STRUCTURE_EXTRACTOR;
+        }
+    });
+
+    var sites = room.find(FIND_CONSTRUCTION_SITES, {
+        filter: function(site) {
+            return site.my !== false && site.structureType == STRUCTURE_EXTRACTOR;
+        }
+    });
+
+    for(var i = 0; i < structures.length; i++) {
+        targets.push(structures[i]);
+    }
+
+    for(var j = 0; j < sites.length; j++) {
+        targets.push(sites[j]);
+    }
+
+    if(targets.length) {
+        return targets;
+    }
+
+    if(!needsMore(room, STRUCTURE_EXTRACTOR)) {
+        return targets;
+    }
+
+    var minerals = room.find(FIND_MINERALS);
+    for(var m = 0; m < minerals.length; m++) {
+        targets.push(minerals[m]);
+    }
+
+    return targets;
+}
+
 function isExitSealRoadTargetPos(pos) {
     return pos.x <= 2 || pos.x >= 47 || pos.y <= 2 || pos.y >= 47;
 }
@@ -1289,6 +1333,35 @@ function planBaseAccessRoads(room, spawns, remaining) {
     return placed;
 }
 
+function planExtractorAccessRoads(room, spawns, remaining) {
+    if(remaining <= 0 || !spawns.length) {
+        return 0;
+    }
+
+    var placed = 0;
+    var primary = spawns[0];
+    var targets = getExtractorRoadTargets(room);
+
+    targets.sort(function(a, b) {
+        return a.pos.getRangeTo(primary) - b.pos.getRangeTo(primary);
+    });
+
+    for(var i = 0; i < targets.length && placed < remaining; i++) {
+        var nearestSpawn = getNearestSpawn(spawns, targets[i].pos);
+        placed += planRoadPath(room, nearestSpawn.pos, targets[i].pos, 1, remaining - placed);
+    }
+
+    if(placed > 0) {
+        debug.log(
+            'debugConstruction',
+            room.name + ' planned ' + placed + ' extractor access road site(s)',
+            1
+        );
+    }
+
+    return placed;
+}
+
 function planExitRampartAccessRoads(room, spawns, remaining) {
     if(remaining <= 0 || !spawns.length) {
         return 0;
@@ -1343,6 +1416,10 @@ function planRoads(room, remaining) {
 
     if(placed < remaining) {
         placed += planBaseAccessRoads(room, spawns, remaining - placed);
+    }
+
+    if(placed < remaining) {
+        placed += planExtractorAccessRoads(room, spawns, remaining - placed);
     }
 
     var sources = room.find(FIND_SOURCES);
@@ -2594,6 +2671,12 @@ function drawRoadPlannerVisuals(room, settings) {
     for(var b = 0; b < baseTargets.length; b++) {
         var nearestSpawn = getNearestSpawn(spawns, baseTargets[b].pos);
         drawPlannerPath(room, getPath(room, nearestSpawn.pos, baseTargets[b].pos, 1), '#66ccff');
+    }
+
+    var extractorTargets = getExtractorRoadTargets(room);
+    for(var extractorIndex = 0; extractorIndex < extractorTargets.length; extractorIndex++) {
+        var nearestExtractorSpawn = getNearestSpawn(spawns, extractorTargets[extractorIndex].pos);
+        drawPlannerPath(room, getPath(room, nearestExtractorSpawn.pos, extractorTargets[extractorIndex].pos, 1), '#66ccff');
     }
 
     var sources = room.find(FIND_SOURCES);
