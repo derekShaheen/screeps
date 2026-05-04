@@ -1208,6 +1208,30 @@ function findRuinEnergy(creep) {
     });
 }
 
+function hasIdleTransporterForLooseEnergy(room, exceptCreepName) {
+    for(var name in Game.creeps) {
+        var creep = Game.creeps[name];
+        if(creep.name == exceptCreepName ||
+            creep.spawning ||
+            creep.room.name != room.name ||
+            creep.memory.role != 'transporter' ||
+            creep.memory.working ||
+            creep.store.getFreeCapacity(RESOURCE_ENERGY) <= 0) {
+            continue;
+        }
+
+        return true;
+    }
+
+    return false;
+}
+
+function shouldDeferLooseEnergyToTransporter(creep, options) {
+    return options.preferTransporterLoot !== false &&
+        creep.memory.role != 'transporter' &&
+        hasIdleTransporterForLooseEnergy(creep.room, creep.name);
+}
+
 function collectEnergy(creep, options) {
     options = options || {};
 
@@ -1217,21 +1241,23 @@ function collectEnergy(creep, options) {
         return true;
     }
 
-    var tombstone = findTombstoneEnergy(creep);
-    if(tombstone) {
-        debug.log('debugRoles', creep.name + ' looting tombstone energy in ' + creep.room.name, 5);
-        return withdrawFromTarget(creep, tombstone, 'go loot', 'loot');
-    }
+    if(!shouldDeferLooseEnergyToTransporter(creep, options)) {
+        var tombstone = findTombstoneEnergy(creep);
+        if(tombstone) {
+            debug.log('debugRoles', creep.name + ' looting tombstone energy in ' + creep.room.name, 5);
+            return withdrawFromTarget(creep, tombstone, 'go loot', 'loot');
+        }
 
-    var ruin = findRuinEnergy(creep);
-    if(ruin) {
-        debug.log('debugRoles', creep.name + ' looting ruin energy in ' + creep.room.name, 5);
-        return withdrawFromTarget(creep, ruin, 'go loot', 'loot');
-    }
+        var ruin = findRuinEnergy(creep);
+        if(ruin) {
+            debug.log('debugRoles', creep.name + ' looting ruin energy in ' + creep.room.name, 5);
+            return withdrawFromTarget(creep, ruin, 'go loot', 'loot');
+        }
 
-    var droppedEnergy = findDroppedEnergy(creep);
-    if(droppedEnergy) {
-        return pickupTarget(creep, droppedEnergy);
+        var droppedEnergy = findDroppedEnergy(creep);
+        if(droppedEnergy) {
+            return pickupTarget(creep, droppedEnergy);
+        }
     }
 
     if(options.preferHarvest) {
@@ -1246,7 +1272,9 @@ function collectEnergy(creep, options) {
     }
 
     if(options.allowHarvest === false) {
-        debug.log('debugRoles', creep.name + ' found no stored energy and is not allowed to harvest', 5);
+        if(!options.quietNoEnergy) {
+            debug.log('debugRoles', creep.name + ' found no stored energy and is not allowed to harvest', 5);
+        }
         return false;
     }
 

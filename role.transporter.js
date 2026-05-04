@@ -227,14 +227,14 @@ var roleTransporter = {
             return;
         }
 
+        if(creepUtils.collectEnergy(creep, {allowHarvest: false, allowStored: false, quietNoEnergy: true})) {
+            return;
+        }
+
         var sourceEnergy = findSourceEnergy(creep) || findFallbackStoredEnergy(creep);
         if(sourceEnergy) {
             delete creep.memory.remoteHauling;
             withdrawEnergy(creep, sourceEnergy);
-            return;
-        }
-
-        if(creepUtils.collectEnergy(creep, {allowHarvest: false, allowStored: false})) {
             return;
         }
 

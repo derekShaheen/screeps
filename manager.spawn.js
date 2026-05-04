@@ -395,6 +395,23 @@ function countSourceContainers(room) {
     return containers.length;
 }
 
+function countSourceContainerEnergy(room) {
+    var energy = 0;
+    var containers = room.find(FIND_STRUCTURES, {
+        filter: function(structure) {
+            return structure.structureType == STRUCTURE_CONTAINER &&
+                structure.store &&
+                structure.pos.findInRange(FIND_SOURCES, 1).length > 0;
+        }
+    });
+
+    for(var i = 0; i < containers.length; i++) {
+        energy += containers[i].store[RESOURCE_ENERGY];
+    }
+
+    return energy;
+}
+
 function countSourceContainerSites(room) {
     var sites = room.find(FIND_CONSTRUCTION_SITES, {
         filter: function(site) {
@@ -417,6 +434,23 @@ function hasStoredEnergy(room) {
     });
 
     return stores.length > 0;
+}
+
+function getStorageEnergy(room) {
+    var energy = 0;
+    var stores = room.find(FIND_STRUCTURES, {
+        filter: function(structure) {
+            return structure.store &&
+                (structure.structureType == STRUCTURE_STORAGE ||
+                structure.structureType == STRUCTURE_CONTAINER);
+        }
+    });
+
+    for(var i = 0; i < stores.length; i++) {
+        energy += stores[i].store[RESOURCE_ENERGY];
+    }
+
+    return energy;
 }
 
 function hasMineralStorage(room) {
@@ -526,33 +560,40 @@ function scaleHarvesters(room, targets) {
 function scaleTransporters(room, targets) {
     var sourceContainers = countSourceContainers(room);
     var hasStorage = countStructures(room, STRUCTURE_STORAGE) > 0;
+    var sourceContainerEnergy = countSourceContainerEnergy(room);
+    var storedEnergy = getStorageEnergy(room);
+    var desiredTransporters = targets.transporter;
 
     if(sourceContainers > 0 || hasStorage) {
-        targets.transporter = Math.max(targets.transporter, 1);
+        desiredTransporters = Math.max(desiredTransporters, 1);
     }
 
-    if(sourceContainers > 0 && room.energyCapacityAvailable >= 550) {
-        targets.transporter = Math.max(targets.transporter, 2);
+    if(sourceContainers >= 2 &&
+        room.energyCapacityAvailable >= 800 &&
+        sourceContainerEnergy >= 300) {
+        desiredTransporters = Math.max(desiredTransporters, 2);
     }
 
-    if(sourceContainers >= 2 && room.energyCapacityAvailable >= 800) {
-        targets.transporter = Math.max(targets.transporter, 3);
+    if(hasStorage && room.energyCapacityAvailable >= 800 && storedEnergy >= 2000) {
+        desiredTransporters = Math.max(desiredTransporters, 2);
     }
 
-    if(hasStorage && room.energyCapacityAvailable >= 800) {
-        targets.transporter = Math.max(targets.transporter, 3);
+    if(hasStorage && room.energyCapacityAvailable >= 1300 && storedEnergy >= 8000) {
+        desiredTransporters = Math.max(desiredTransporters, 3);
     }
 
     if(room.memory.defenseMode && countStructures(room, STRUCTURE_TOWER) > 0) {
-        targets.transporter = Math.max(targets.transporter, 2);
+        desiredTransporters = Math.max(desiredTransporters, 2);
     }
 
     if(room.controller &&
         room.controller.level >= 4 &&
-        hasStoredEnergy(room) &&
+        storedEnergy >= 2000 &&
         room.energyCapacityAvailable >= 800) {
-        targets.transporter = Math.max(targets.transporter, 3);
+        desiredTransporters = Math.max(desiredTransporters, 2);
     }
+
+    targets.transporter = desiredTransporters;
 }
 
 function scaleBuilders(room, targets, constructionSites) {

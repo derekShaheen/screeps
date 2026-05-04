@@ -97,6 +97,19 @@ function getClosestByApproxRange(fromPos, targets) {
     return targets[0];
 }
 
+function getMapRoomStatus(roomName) {
+    if(!Game.map.getRoomStatus) {
+        return 'normal';
+    }
+
+    var status = Game.map.getRoomStatus(roomName);
+    return status && status.status ? status.status : 'normal';
+}
+
+function isAccessibleMapRoom(roomName) {
+    return getMapRoomStatus(roomName) == 'normal';
+}
+
 function rememberAdjacentRooms(room, settings) {
     if(typeof Game.map.describeExits != 'function') {
         return;
@@ -105,6 +118,7 @@ function rememberAdjacentRooms(room, settings) {
     var exits = Game.map.describeExits(room.name) || {};
     for(var direction in exits) {
         var roomName = exits[direction];
+        var mapStatus = getMapRoomStatus(roomName);
         if(!settings.rooms[roomName]) {
             settings.rooms[roomName] = {
                 enabled: true,
@@ -114,10 +128,30 @@ function rememberAdjacentRooms(room, settings) {
         }
 
         settings.rooms[roomName].exit = direction;
+        settings.rooms[roomName].mapStatus = mapStatus;
+        if(!isAccessibleMapRoom(roomName)) {
+            settings.rooms[roomName].status = 'blocked';
+            settings.rooms[roomName].reason = 'map status ' + mapStatus;
+            continue;
+        }
+
+        if(settings.rooms[roomName].status == 'blocked' &&
+            settings.rooms[roomName].reason &&
+            settings.rooms[roomName].reason.indexOf('map status ') === 0) {
+            settings.rooms[roomName].status = 'unknown';
+            delete settings.rooms[roomName].reason;
+        }
     }
 }
 
 function updateVisibleRemoteRoom(homeRoom, remoteName, remoteMemory) {
+    remoteMemory.mapStatus = getMapRoomStatus(remoteName);
+    if(!isAccessibleMapRoom(remoteName)) {
+        remoteMemory.status = 'blocked';
+        remoteMemory.reason = 'map status ' + remoteMemory.mapStatus;
+        return;
+    }
+
     var remoteRoom = Game.rooms[remoteName];
     if(!remoteRoom) {
         if(remoteMemory.lastScouted &&
@@ -216,6 +250,7 @@ function getRoomReportLine(roomName, remoteName, remoteMemory) {
     var visible = Game.rooms[remoteName] ? 'visible' : 'unseen';
     var sources = remoteMemory.sourceIds ? remoteMemory.sourceIds.length : '?';
     var distance = remoteMemory.distance === undefined ? '?' : remoteMemory.distance;
+    var mapStatus = remoteMemory.mapStatus ? ' map=' + remoteMemory.mapStatus : '';
     var unsafe = remoteMemory.unsafeUntil && remoteMemory.unsafeUntil > Game.time ?
         ' cooldown ' + (remoteMemory.unsafeUntil - Game.time) :
         '';
@@ -225,6 +260,7 @@ function getRoomReportLine(roomName, remoteName, remoteMemory) {
     return roomName + ' -> ' + remoteName +
         ' status=' + status +
         ' ' + visible +
+        mapStatus +
         ' dist=' + distance +
         ' sources=' + sources +
         unsafe +
