@@ -53,9 +53,7 @@ var DEFAULT_ROOM_MEMORY = {
         maxDefenseSites: 12,
         maxNewDefenseSitesPerTick: 3,
         minWallRcl: 2,
-        requireTowerForDefense: true,
-        debugPlannerVisuals: false,
-        debugPlannerVisualLimit: 120
+        requireTowerForDefense: true
     },
     remote: {
         enabled: true,

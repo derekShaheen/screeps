@@ -4,6 +4,8 @@ var DEFAULT_SETTINGS = {
     debugSpawn: true,
     debugDefense: true,
     debugConstruction: true,
+    debugConstructionPlanner: false,
+    debugConstructionPlannerLimit: 120,
     debugVisuals: true,
     debugPaths: true,
     debugInterval: 5
@@ -31,6 +33,10 @@ function isEnabled(flag) {
 var debug = {
     initialize: function() {
         getSettings();
+    },
+
+    settings: function() {
+        return getSettings();
     },
 
     enabled: function(flag) {

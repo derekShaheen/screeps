@@ -2289,11 +2289,14 @@ function drawRoadPlannerVisuals(room, settings) {
 }
 
 function drawFutureBuildingPlannerVisuals(room, settings) {
+    var debugSettings = debug.settings();
     var visualPositions = [];
     var seen = {};
     var limitState = {
         count: 0,
-        limit: typeof settings.debugPlannerVisualLimit == 'number' ? settings.debugPlannerVisualLimit : 120
+        limit: typeof debugSettings.debugConstructionPlannerLimit == 'number' ?
+            debugSettings.debugConstructionPlannerLimit :
+            120
     };
 
     if(settings.autoExtensions !== false) {
@@ -2408,6 +2411,7 @@ function drawFutureBuildingPlannerVisuals(room, settings) {
 }
 
 function drawPlannerLegend(room, settings) {
+    var debugSettings = debug.settings();
     var lines = [
         '[Construction Planner]',
         'solid square: existing',
@@ -2415,7 +2419,7 @@ function drawPlannerLegend(room, settings) {
         'circle/label: planned slot',
         'blue: road intent',
         'green: rampart/gate',
-        'limit: ' + (settings.debugPlannerVisualLimit || 120)
+        'limit: ' + (debugSettings.debugConstructionPlannerLimit || 120)
     ];
 
     room.visual.rect(31.4, 0.4, 17.8, lines.length + 0.5, {
@@ -2436,7 +2440,7 @@ function drawPlannerLegend(room, settings) {
 }
 
 function drawConstructionPlannerVisuals(room, settings) {
-    if(settings.debugPlannerVisuals !== true) {
+    if(!debug.enabled('debugConstructionPlanner')) {
         return;
     }
 
