@@ -29,6 +29,7 @@ var DEFAULT_ROOM_MEMORY = {
     defenseMode: false,
     construction: {
         autoExtensions: true,
+        autoSpawns: true,
         autoTowers: true,
         autoStorage: true,
         autoContainers: true,
@@ -42,6 +43,7 @@ var DEFAULT_ROOM_MEMORY = {
         autoLinks: true,
         autoExtractor: true,
         autoTerminal: true,
+        autoFactory: true,
         autoLabs: true,
         autoRamparts: false,
         autoExitWalls: true,

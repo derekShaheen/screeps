@@ -3,6 +3,7 @@ var defenseUtils = require('utils.defense');
 
 var BUILDING_STRUCTURES = {};
 BUILDING_STRUCTURES[STRUCTURE_EXTENSION] = true;
+BUILDING_STRUCTURES[STRUCTURE_SPAWN] = true;
 BUILDING_STRUCTURES[STRUCTURE_TOWER] = true;
 BUILDING_STRUCTURES[STRUCTURE_STORAGE] = true;
 BUILDING_STRUCTURES[STRUCTURE_CONTAINER] = true;
@@ -10,6 +11,7 @@ BUILDING_STRUCTURES[STRUCTURE_LINK] = true;
 BUILDING_STRUCTURES[STRUCTURE_EXTRACTOR] = true;
 BUILDING_STRUCTURES[STRUCTURE_LAB] = true;
 BUILDING_STRUCTURES[STRUCTURE_TERMINAL] = true;
+BUILDING_STRUCTURES[STRUCTURE_FACTORY] = true;
 
 var REPLANNABLE_ROAD_BLOCKERS = {};
 REPLANNABLE_ROAD_BLOCKERS[STRUCTURE_EXTENSION] = true;
@@ -1184,8 +1186,10 @@ function getNearestSpawn(spawns, pos) {
 }
 
 function isMajorBaseRoadTarget(structureType) {
-    return structureType == STRUCTURE_STORAGE ||
+    return structureType == STRUCTURE_SPAWN ||
+        structureType == STRUCTURE_STORAGE ||
         structureType == STRUCTURE_TERMINAL ||
+        structureType == STRUCTURE_FACTORY ||
         structureType == STRUCTURE_TOWER ||
         structureType == STRUCTURE_LINK;
 }
@@ -1857,6 +1861,10 @@ function logInfrastructureIdle(room, settings) {
         parts.push('extensions ' + getStructurePlanStatus(room, STRUCTURE_EXTENSION));
     }
 
+    if(settings.autoSpawns !== false) {
+        parts.push('spawns ' + getStructurePlanStatus(room, STRUCTURE_SPAWN));
+    }
+
     if(settings.autoTowers !== false) {
         parts.push('towers ' + getStructurePlanStatus(room, STRUCTURE_TOWER));
     }
@@ -1879,6 +1887,10 @@ function logInfrastructureIdle(room, settings) {
 
     if(settings.autoTerminal !== false) {
         parts.push('terminal ' + getStructurePlanStatus(room, STRUCTURE_TERMINAL));
+    }
+
+    if(settings.autoFactory !== false) {
+        parts.push('factory ' + getStructurePlanStatus(room, STRUCTURE_FACTORY));
     }
 
     if(settings.autoLabs !== false) {
@@ -1924,6 +1936,10 @@ function planInfrastructure(room, settings, totalBudget) {
         placed += planCoreStructure(room, STRUCTURE_EXTENSION, 2, 5, remaining - placed);
     }
 
+    if(settings.autoSpawns !== false && placed < remaining) {
+        placed += planCoreStructure(room, STRUCTURE_SPAWN, 3, 6, remaining - placed);
+    }
+
     if(settings.autoTowers !== false && placed < remaining) {
         placed += planCoreStructure(room, STRUCTURE_TOWER, 2, 4, remaining - placed);
     }
@@ -1946,6 +1962,10 @@ function planInfrastructure(room, settings, totalBudget) {
 
     if(settings.autoTerminal !== false && placed < remaining && hasEarlyExtensionBatch(room, settings)) {
         placed += planTerminal(room, remaining - placed);
+    }
+
+    if(settings.autoFactory !== false && placed < remaining && hasEarlyExtensionBatch(room, settings)) {
+        placed += planCoreStructure(room, STRUCTURE_FACTORY, 2, 5, remaining - placed);
     }
 
     if(settings.autoLabs !== false && placed < remaining && hasEarlyExtensionBatch(room, settings)) {
@@ -2456,6 +2476,7 @@ PLANNER_VISUAL_COLORS[STRUCTURE_STORAGE] = '#ffffff';
 PLANNER_VISUAL_COLORS[STRUCTURE_LINK] = '#66ff99';
 PLANNER_VISUAL_COLORS[STRUCTURE_EXTRACTOR] = '#cc99ff';
 PLANNER_VISUAL_COLORS[STRUCTURE_TERMINAL] = '#ff99cc';
+PLANNER_VISUAL_COLORS[STRUCTURE_FACTORY] = '#ffaa66';
 PLANNER_VISUAL_COLORS[STRUCTURE_LAB] = '#99ccff';
 PLANNER_VISUAL_COLORS[STRUCTURE_RAMPART] = '#66ff66';
 PLANNER_VISUAL_COLORS[STRUCTURE_WALL] = '#999999';
@@ -2470,6 +2491,7 @@ PLANNER_VISUAL_LABELS[STRUCTURE_STORAGE] = 'S';
 PLANNER_VISUAL_LABELS[STRUCTURE_LINK] = 'L';
 PLANNER_VISUAL_LABELS[STRUCTURE_EXTRACTOR] = 'X';
 PLANNER_VISUAL_LABELS[STRUCTURE_TERMINAL] = 'M';
+PLANNER_VISUAL_LABELS[STRUCTURE_FACTORY] = 'F';
 PLANNER_VISUAL_LABELS[STRUCTURE_LAB] = 'B';
 PLANNER_VISUAL_LABELS[STRUCTURE_RAMPART] = 'R';
 PLANNER_VISUAL_LABELS[STRUCTURE_WALL] = 'W';
@@ -2710,6 +2732,10 @@ function drawFutureBuildingPlannerVisuals(room, settings) {
         addFutureSlots(visualPositions, seen, getFutureCoreSlots(room, STRUCTURE_EXTENSION, 2, 5, limitState.limit), STRUCTURE_EXTENSION, limitState);
     }
 
+    if(settings.autoSpawns !== false) {
+        addFutureSlots(visualPositions, seen, getFutureCoreSlots(room, STRUCTURE_SPAWN, 3, 6, limitState.limit), STRUCTURE_SPAWN, limitState);
+    }
+
     if(settings.autoTowers !== false) {
         addFutureSlots(visualPositions, seen, getFutureCoreSlots(room, STRUCTURE_TOWER, 2, 4, limitState.limit), STRUCTURE_TOWER, limitState);
     }
@@ -2789,6 +2815,10 @@ function drawFutureBuildingPlannerVisuals(room, settings) {
                 limitState
             );
         }
+    }
+
+    if(settings.autoFactory !== false && hasEarlyExtensionBatch(room, settings)) {
+        addFutureSlots(visualPositions, seen, getFutureCoreSlots(room, STRUCTURE_FACTORY, 2, 5, limitState.limit), STRUCTURE_FACTORY, limitState);
     }
 
     if(settings.autoLabs !== false && hasEarlyExtensionBatch(room, settings)) {
