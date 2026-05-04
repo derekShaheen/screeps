@@ -633,6 +633,23 @@ function countRemoteCreeps(homeRoomName, role, remoteRoomName, sourceId) {
     return count;
 }
 
+function hasSourceContainer(sourceId) {
+    if(!sourceId) {
+        return false;
+    }
+
+    var source = Game.getObjectById(sourceId);
+    if(!source) {
+        return false;
+    }
+
+    return source.pos.findInRange(FIND_STRUCTURES, 1, {
+        filter: function(structure) {
+            return structure.structureType == STRUCTURE_CONTAINER;
+        }
+    }).length > 0;
+}
+
 function makeRemoteSpawnRequest(homeRoomName, remoteName, sourceId) {
     var memory = {
         role: 'remoteMiner',
@@ -647,7 +664,7 @@ function makeRemoteSpawnRequest(homeRoomName, remoteName, sourceId) {
 
     return {
         role: 'remoteMiner',
-        bodyType: 'remoteMiner',
+        bodyType: hasSourceContainer(sourceId) ? 'remoteMiner' : 'remoteStarterMiner',
         memory: memory
     };
 }
@@ -851,6 +868,11 @@ function getRemoteSpawnReportLine(room, settings, spawnManager) {
 
     var line = 'remote spawn next=' + decision.request.role +
         ' -> ' + decision.request.memory.targetRoom;
+    if(decision.request.bodyType &&
+        decision.request.bodyType != decision.request.role) {
+        line += ' body=' + decision.request.bodyType;
+    }
+
     if(decision.request.memory.sourceId) {
         line += ' source=' + decision.request.memory.sourceId;
     }

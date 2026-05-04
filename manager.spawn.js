@@ -50,6 +50,12 @@ var BODIES = {
         [WORK, WORK, WORK, CARRY, MOVE, MOVE, MOVE, MOVE],
         [WORK, WORK, WORK, WORK, CARRY, MOVE, MOVE, MOVE, MOVE, MOVE]
     ],
+    remoteStarterMiner: [
+        [WORK, CARRY, MOVE],
+        [WORK, WORK, CARRY, CARRY, MOVE, MOVE],
+        [WORK, WORK, WORK, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE],
+        [WORK, WORK, WORK, WORK, CARRY, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE, MOVE]
+    ],
     remoteHauler: [
         [CARRY, CARRY, MOVE, MOVE],
         [CARRY, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE, MOVE],
@@ -82,6 +88,7 @@ var LOW_STAFF_BODY_BUDGET = {
     builder: 700,
     mineralHarvester: 800,
     remoteMiner: 700,
+    remoteStarterMiner: 800,
     remoteHauler: 800,
     defender: 650,
     defenderHealer: 850
@@ -94,6 +101,7 @@ var BODY_GROWTH = {
     builder: [WORK, CARRY, CARRY, MOVE],
     mineralHarvester: [WORK, WORK, CARRY, MOVE],
     remoteMiner: [WORK, MOVE],
+    remoteStarterMiner: [WORK, CARRY, MOVE],
     remoteHauler: [CARRY, CARRY, MOVE, MOVE],
     defender: [TOUGH, ATTACK, MOVE],
     defenderHealer: [TOUGH, HEAL, MOVE]
