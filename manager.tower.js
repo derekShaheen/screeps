@@ -1,6 +1,8 @@
 var debug = require('utils.debug');
 var defenseUtils = require('utils.defense');
 
+var DEFENSE_MODE_MEMORY_TICKS = 50;
+
 function formatPos(pos) {
     return pos.roomName + ':' + pos.x + ',' + pos.y;
 }
@@ -211,7 +213,13 @@ function activateSafeModeIfNeeded(room, hostiles) {
 var towerManager = {
     run: function(room) {
         var hostiles = room.find(FIND_HOSTILE_CREEPS);
-        room.memory.defenseMode = hostiles.length > 0;
+        if(hostiles.length > 0) {
+            room.memory.lastHostileSeenTick = Game.time;
+        }
+
+        room.memory.defenseMode = hostiles.length > 0 ||
+            (room.memory.lastHostileSeenTick &&
+                Game.time - room.memory.lastHostileSeenTick <= DEFENSE_MODE_MEMORY_TICKS);
 
         if(hostiles.length) {
             debug.log('debugDefense', room.name + ' hostile alert: ' + hostiles.length, 1);
