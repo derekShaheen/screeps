@@ -64,6 +64,19 @@ function hasRoadOrRoadSite(pos) {
     return hasStructure(pos, STRUCTURE_ROAD) || hasConstructionSite(pos, STRUCTURE_ROAD);
 }
 
+function hasMineralAt(room, pos) {
+    var minerals = room.find(FIND_MINERALS);
+    for(var i = 0; i < minerals.length; i++) {
+        if(minerals[i].pos.x == pos.x &&
+            minerals[i].pos.y == pos.y &&
+            minerals[i].pos.roomName == pos.roomName) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 function getConstructionSites(pos) {
     return pos.lookFor(LOOK_CONSTRUCTION_SITES);
 }
@@ -172,6 +185,12 @@ function canCreateSite(room, pos, structureType) {
         return false;
     }
 
+    if(structureType == STRUCTURE_EXTRACTOR) {
+        return !hasStructure(pos, STRUCTURE_EXTRACTOR) &&
+            !hasConstructionSite(pos) &&
+            hasMineralAt(room, pos);
+    }
+
     if(getTerrain(room, pos.x, pos.y) == TERRAIN_MASK_WALL) {
         return false;
     }
@@ -183,11 +202,6 @@ function canCreateSite(room, pos, structureType) {
     if((structureType == STRUCTURE_WALL || structureType == STRUCTURE_RAMPART) &&
         isExitBuffer(pos)) {
         return false;
-    }
-
-    if(structureType == STRUCTURE_EXTRACTOR) {
-        return !hasStructure(pos, STRUCTURE_EXTRACTOR) &&
-            pos.lookFor(LOOK_MINERALS).length > 0;
     }
 
     if(structureType == STRUCTURE_RAMPART) {
@@ -593,6 +607,132 @@ function planAnchoredStructure(room, structureType, anchorPos, minRange, maxRang
         debug.log(
             'debugConstruction',
             room.name + ' planned ' + placed + ' ' + structureType + ' anchored site(s)',
+            1
+        );
+    }
+
+    return placed;
+}
+
+function getLabPositions(room) {
+    var positions = [];
+    var labs = room.find(FIND_STRUCTURES, {
+        filter: function(structure) {
+            return structure.structureType == STRUCTURE_LAB;
+        }
+    });
+
+    var labSites = room.find(FIND_CONSTRUCTION_SITES, {
+        filter: function(site) {
+            return site.structureType == STRUCTURE_LAB && site.my !== false;
+        }
+    });
+
+    for(var i = 0; i < labs.length; i++) {
+        positions.push(labs[i].pos);
+    }
+
+    for(var j = 0; j < labSites.length; j++) {
+        positions.push(labSites[j].pos);
+    }
+
+    return positions;
+}
+
+function isInRangeOfAll(pos, positions, range) {
+    for(var i = 0; i < positions.length; i++) {
+        if(pos.getRangeTo(positions[i]) > range) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function getLabClusterScore(anchorPos, slots) {
+    var score = 0;
+    for(var i = 0; i < slots.length; i++) {
+        score += slots[i].getRangeTo(anchorPos);
+    }
+
+    return score;
+}
+
+function getLabClusterSlots(room, anchorPos, minRange, maxRange, limit) {
+    if(limit <= 0 || !anchorPos || !needsMore(room, STRUCTURE_LAB)) {
+        return [];
+    }
+
+    var missing = Math.min(limit, getAllowedCount(room, STRUCTURE_LAB) - countStructuresAndSites(room, STRUCTURE_LAB));
+    var existing = getLabPositions(room);
+    var candidates = getCandidateRingAroundPos(room, anchorPos, minRange, maxRange);
+    var slots = [];
+    sortByAnchor(room, candidates, anchorPos, STRUCTURE_LAB);
+
+    candidates = candidates.filter(function(pos) {
+        return !isReservedBaseRoadTile(room, pos) &&
+            canCreateSite(room, pos, STRUCTURE_LAB) &&
+            isInRangeOfAll(pos, existing, 2);
+    });
+
+    if(existing.length > 0) {
+        for(var i = 0; i < candidates.length && slots.length < missing; i++) {
+            if(isInRangeOfAll(candidates[i], existing.concat(slots), 2)) {
+                slots.push(candidates[i]);
+            }
+        }
+
+        return slots;
+    }
+
+    var bestSlots = [];
+    var bestScore = 999999;
+    for(var seedIndex = 0; seedIndex < candidates.length; seedIndex++) {
+        var cluster = [candidates[seedIndex]];
+        for(var candidateIndex = 0; candidateIndex < candidates.length && cluster.length < missing; candidateIndex++) {
+            if(candidateIndex == seedIndex) {
+                continue;
+            }
+
+            if(isInRangeOfAll(candidates[candidateIndex], cluster, 2)) {
+                cluster.push(candidates[candidateIndex]);
+            }
+        }
+
+        var score = getLabClusterScore(anchorPos, cluster);
+        if(cluster.length > bestSlots.length ||
+            (cluster.length == bestSlots.length && score < bestScore)) {
+            bestSlots = cluster;
+            bestScore = score;
+        }
+
+        if(bestSlots.length >= missing) {
+            break;
+        }
+    }
+
+    return bestSlots.slice(0, missing);
+}
+
+function planLabCluster(room, anchorPos, remaining) {
+    var slots = getLabClusterSlots(room, anchorPos, 2, 5, remaining);
+    var placed = 0;
+
+    for(var i = 0; i < slots.length && placed < remaining; i++) {
+        var result = createSite(room, slots[i], STRUCTURE_LAB);
+        if(result == OK) {
+            placed++;
+        }
+
+        if(result == ERR_FULL) {
+            break;
+        }
+    }
+
+    if(placed > 0) {
+        debug.log(
+            'debugConstruction',
+            room.name + ' planned ' + placed + ' clustered lab site(s)',
             1
         );
     }
@@ -1523,6 +1663,12 @@ function planExtractor(room, remaining) {
         return 1;
     }
 
+    debug.log(
+        'debugConstruction',
+        room.name + ' failed extractor plan at ' + formatPos(minerals[0].pos) + ': ' + result,
+        5
+    );
+
     return 0;
 }
 
@@ -1534,7 +1680,7 @@ function planTerminal(room, remaining) {
 function planLabs(room, remaining) {
     var terminal = getTerminal(room);
     var anchor = terminal || getStorage(room) || getPrimarySpawn(room);
-    return anchor ? planAnchoredStructure(room, STRUCTURE_LAB, anchor.pos, 2, 5, remaining) : 0;
+    return anchor ? planLabCluster(room, anchor.pos, remaining) : 0;
 }
 
 function planPriorityTowers(room, settings, totalBudget) {
@@ -2569,7 +2715,7 @@ function drawFutureBuildingPlannerVisuals(room, settings) {
             addFutureSlots(
                 visualPositions,
                 seen,
-                getFutureAnchoredSlots(room, STRUCTURE_LAB, labAnchor.pos, 2, 5, limitState.limit),
+                getLabClusterSlots(room, labAnchor.pos, 2, 5, limitState.limit),
                 STRUCTURE_LAB,
                 limitState
             );

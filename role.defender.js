@@ -159,6 +159,119 @@ function moveToSquadMate(creep, squadMate, label) {
     return true;
 }
 
+function hasRoadOrRoadSite(pos) {
+    var structures = pos.lookFor(LOOK_STRUCTURES);
+    for(var i = 0; i < structures.length; i++) {
+        if(structures[i].structureType == STRUCTURE_ROAD) {
+            return true;
+        }
+    }
+
+    var sites = pos.lookFor(LOOK_CONSTRUCTION_SITES);
+    for(var j = 0; j < sites.length; j++) {
+        if(sites[j].structureType == STRUCTURE_ROAD) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function isWalkableIdlePosition(creep, pos) {
+    if(pos.x <= 0 || pos.x >= 49 || pos.y <= 0 || pos.y >= 49) {
+        return false;
+    }
+
+    if(creep.room.getTerrain().get(pos.x, pos.y) == TERRAIN_MASK_WALL) {
+        return false;
+    }
+
+    if(hasRoadOrRoadSite(pos)) {
+        return false;
+    }
+
+    var creeps = pos.lookFor(LOOK_CREEPS);
+    for(var i = 0; i < creeps.length; i++) {
+        if(creeps[i].name != creep.name) {
+            return false;
+        }
+    }
+
+    var structures = pos.lookFor(LOOK_STRUCTURES);
+    for(var j = 0; j < structures.length; j++) {
+        if(structures[j].structureType != STRUCTURE_RAMPART) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function findRoadIdleFallback(creep, guardTarget) {
+    var targetPos = guardTarget.pos || guardTarget;
+    var candidates = [];
+
+    for(var range = 1; range <= 3; range++) {
+        for(var dx = -range; dx <= range; dx++) {
+            for(var dy = -range; dy <= range; dy++) {
+                if(Math.max(Math.abs(dx), Math.abs(dy)) != range) {
+                    continue;
+                }
+
+                var pos = new RoomPosition(creep.pos.x + dx, creep.pos.y + dy, creep.pos.roomName);
+                if(isWalkableIdlePosition(creep, pos)) {
+                    candidates.push(pos);
+                }
+            }
+        }
+
+        if(candidates.length) {
+            break;
+        }
+    }
+
+    if(!candidates.length) {
+        return null;
+    }
+
+    candidates.sort(function(a, b) {
+        var targetDiff = a.getRangeTo(targetPos) - b.getRangeTo(targetPos);
+        if(targetDiff !== 0) {
+            return targetDiff;
+        }
+
+        return creep.pos.getRangeTo(a) - creep.pos.getRangeTo(b);
+    });
+
+    return candidates[0];
+}
+
+function stepOffRoadIfIdle(creep, guardTarget) {
+    if(!hasRoadOrRoadSite(creep.pos)) {
+        return false;
+    }
+
+    var fallback = findRoadIdleFallback(creep, guardTarget);
+    if(!fallback) {
+        return false;
+    }
+
+    debug.log(
+        'debugDefense',
+        creep.name + ' stepping off road while idle',
+        5
+    );
+
+    if(creep.pos.getRangeTo(fallback) <= 1) {
+        creepUtils.announceIntent(creep, 'action:guardStep', 'clear road');
+        creep.move(creep.pos.getDirectionTo(fallback));
+        return true;
+    }
+
+    creepUtils.moveTo(creep, fallback, '#ffcc00', 'clear road', 'move:defenderIdle');
+    return true;
+}
+
 function guardBase(creep) {
     var target = getGuardTarget(creep);
     if(!creepUtils.canReachBeforeDecay(creep, target, 3)) {
@@ -168,6 +281,10 @@ function guardBase(creep) {
 
     if(creep.pos.getRangeTo(target) > 3) {
         creepUtils.moveTo(creep, target, '#ffcc00', 'guard', 'move:guard');
+        return;
+    }
+
+    if(stepOffRoadIfIdle(creep, target)) {
         return;
     }
 
