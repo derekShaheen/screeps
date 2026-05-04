@@ -185,7 +185,7 @@ function idleNearBase(creep) {
     });
 
     if(spawn &&
-        creep.pos.getRangeTo(spawn) > 3 &&
+        creep.pos.getRangeTo(spawn) > 8 &&
         creepUtils.canReachBeforeDecay(creep, spawn, 3)) {
         creepUtils.moveTo(creep, spawn, '#66ccff', 'idle', 'move:idle');
         return;

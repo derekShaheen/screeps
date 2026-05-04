@@ -767,7 +767,7 @@ function getQueueHarvestPositions(creep, source) {
 
 function getWaitingPositions(creep, source) {
     var positions = [];
-    for(var range = 3; range <= 5; range++) {
+    for(var range = 2; range <= 4; range++) {
         for(var dx = -range; dx <= range; dx++) {
             for(var dy = -range; dy <= range; dy++) {
                 if(Math.max(Math.abs(dx), Math.abs(dy)) != range) {
@@ -789,7 +789,13 @@ function getWaitingPositions(creep, source) {
     }
 
     positions.sort(function(a, b) {
-        var sourceRangeDiff = b.getRangeTo(source) - a.getRangeTo(source);
+        var aTravel = creep.pos.getRangeTo(a);
+        var bTravel = creep.pos.getRangeTo(b);
+        if(aTravel !== bTravel) {
+            return aTravel - bTravel;
+        }
+
+        var sourceRangeDiff = a.getRangeTo(source) - b.getRangeTo(source);
         if(sourceRangeDiff !== 0) {
             return sourceRangeDiff;
         }
@@ -802,6 +808,57 @@ function getWaitingPositions(creep, source) {
     });
 
     return positions;
+}
+
+function getNearbyQueueWaitingPosition(creep, source) {
+    var candidates = [];
+
+    for(var dx = -2; dx <= 2; dx++) {
+        for(var dy = -2; dy <= 2; dy++) {
+            if(dx === 0 && dy === 0) {
+                continue;
+            }
+
+            var x = creep.pos.x + dx;
+            var y = creep.pos.y + dy;
+            if(x <= 0 || x >= 49 || y <= 0 || y >= 49) {
+                continue;
+            }
+
+            var pos = new RoomPosition(x, y, creep.pos.roomName);
+            if(!isWalkableHarvestPosition(pos, creep, false) || pos.getRangeTo(source) <= 1) {
+                continue;
+            }
+
+            candidates.push(pos);
+        }
+    }
+
+    if(!candidates.length) {
+        return null;
+    }
+
+    candidates.sort(function(a, b) {
+        var aTravel = creep.pos.getRangeTo(a);
+        var bTravel = creep.pos.getRangeTo(b);
+        if(aTravel !== bTravel) {
+            return aTravel - bTravel;
+        }
+
+        var aSourceRange = a.getRangeTo(source);
+        var bSourceRange = b.getRangeTo(source);
+        if(aSourceRange !== bSourceRange) {
+            return aSourceRange - bSourceRange;
+        }
+
+        if(a.x != b.x) {
+            return a.x - b.x;
+        }
+
+        return a.y - b.y;
+    });
+
+    return candidates[0];
 }
 
 function rememberQueueDestination(creep, source, index, destination) {
@@ -837,6 +894,13 @@ function getQueuedSourceDestination(creep, source, queue) {
 
     if(index >= 0 && index < harvestPositions.length) {
         destination = harvestPositions[index];
+        rememberQueueDestination(creep, source, index, destination);
+        return destination;
+    }
+
+    var nearbyWaitingPosition = getNearbyQueueWaitingPosition(creep, source);
+    if(nearbyWaitingPosition) {
+        destination = nearbyWaitingPosition;
         rememberQueueDestination(creep, source, index, destination);
         return destination;
     }

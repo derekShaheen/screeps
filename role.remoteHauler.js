@@ -61,7 +61,7 @@ function idleAtHome(creep) {
     var targetPos = target.pos || target;
     if(target &&
         (creep.pos.roomName != targetPos.roomName ||
-        creep.pos.getRangeTo(targetPos) > 3)) {
+        creep.pos.getRangeTo(targetPos) > 8)) {
         creepUtils.moveTo(creep, target, '#66ccff', 'idle', 'move:remoteIdle');
         return true;
     }
