@@ -559,7 +559,7 @@ function getRoomReportLine(roomName, remoteName, remoteMemory) {
         decision;
 }
 
-function getReport(homeRoomName) {
+function getReport(homeRoomName, spawnManager) {
     var lines = [];
     var roomNames = [];
 
@@ -598,6 +598,7 @@ function getReport(homeRoomName) {
                 ' known=' + remoteNames.length +
                 (homeBlockers.length ? ' blockedBy=' + homeBlockers.join(', ') : ' eligible')
         );
+        lines.push(getRemoteSpawnReportLine(room, settings, spawnManager));
 
         if(!remoteNames.length) {
             lines.push(roomNames[i] + ' has not discovered adjacent rooms yet');
@@ -632,6 +633,38 @@ function countRemoteCreeps(homeRoomName, role, remoteRoomName, sourceId) {
     return count;
 }
 
+function makeRemoteSpawnRequest(homeRoomName, remoteName, sourceId) {
+    var memory = {
+        role: 'remoteMiner',
+        homeRoom: homeRoomName,
+        targetRoom: remoteName,
+        working: false
+    };
+
+    if(sourceId) {
+        memory.sourceId = sourceId;
+    }
+
+    return {
+        role: 'remoteMiner',
+        bodyType: 'remoteMiner',
+        memory: memory
+    };
+}
+
+function makeRemoteHaulerSpawnRequest(homeRoomName, remoteName) {
+    return {
+        role: 'remoteHauler',
+        bodyType: 'remoteHauler',
+        memory: {
+            role: 'remoteHauler',
+            homeRoom: homeRoomName,
+            targetRoom: remoteName,
+            working: false
+        }
+    };
+}
+
 function getRemoteEnergyAmount(remoteRoomName) {
     var remoteRoom = Game.rooms[remoteRoomName];
     if(!remoteRoom) {
@@ -664,15 +697,24 @@ function getRemoteEnergyAmount(remoteRoomName) {
     return energy;
 }
 
-function getSpawnRequest(room) {
-    var settings = updateRemoteMemory(room);
-    if(settings.enabled === false ||
-        !room.controller ||
-        room.controller.level < settings.minHomeRcl) {
-        return null;
+function getRemoteSpawnDecision(room, settings) {
+    var reasons = [];
+    var homeBlockers = getHomeExplorationBlockers(room, room ? room.memory : null, settings);
+    if(homeBlockers.length) {
+        return {
+            request: null,
+            reasons: homeBlockers
+        };
     }
 
     var rooms = getActiveRemoteRooms(room);
+    if(!rooms.length) {
+        return {
+            request: null,
+            reasons: ['no active eligible remote rooms']
+        };
+    }
+
     for(var i = 0; i < rooms.length; i++) {
         var remote = rooms[i];
         var sourceIds = remote.memory.sourceIds || [];
@@ -680,31 +722,24 @@ function getSpawnRequest(room) {
         if(remote.memory.status == 'unknown' || !sourceIds.length) {
             if(countRemoteCreeps(room.name, 'remoteMiner', remote.name) === 0) {
                 return {
-                    role: 'remoteMiner',
-                    bodyType: 'remoteMiner',
-                    memory: {
-                        role: 'remoteMiner',
-                        homeRoom: room.name,
-                        targetRoom: remote.name,
-                        working: false
-                    }
+                    request: makeRemoteSpawnRequest(room.name, remote.name),
+                    reasons: [],
+                    detail: remote.name + ': scout/source discovery needed'
                 };
             }
+
+            reasons.push(remote.name + ': scout remoteMiner already assigned');
             continue;
         }
 
+        var missingMiner = false;
         for(var sourceIndex = 0; sourceIndex < sourceIds.length; sourceIndex++) {
             if(countRemoteCreeps(room.name, 'remoteMiner', remote.name, sourceIds[sourceIndex]) === 0) {
+                missingMiner = true;
                 return {
-                    role: 'remoteMiner',
-                    bodyType: 'remoteMiner',
-                    memory: {
-                        role: 'remoteMiner',
-                        homeRoom: room.name,
-                        targetRoom: remote.name,
-                        sourceId: sourceIds[sourceIndex],
-                        working: false
-                    }
+                    request: makeRemoteSpawnRequest(room.name, remote.name, sourceIds[sourceIndex]),
+                    reasons: [],
+                    detail: remote.name + ': missing miner for source ' + sourceIds[sourceIndex]
                 };
             }
         }
@@ -713,19 +748,137 @@ function getSpawnRequest(room) {
         var haulers = countRemoteCreeps(room.name, 'remoteHauler', remote.name);
         if(energy >= settings.minHaulEnergy && haulers === 0) {
             return {
-                role: 'remoteHauler',
-                bodyType: 'remoteHauler',
-                memory: {
-                    role: 'remoteHauler',
-                    homeRoom: room.name,
-                    targetRoom: remote.name,
-                    working: false
-                }
+                request: makeRemoteHaulerSpawnRequest(room.name, remote.name),
+                reasons: [],
+                detail: remote.name + ': remote energy ' + energy + ' ready for hauling'
             };
+        }
+
+        var roomReasons = [];
+        if(!missingMiner) {
+            roomReasons.push('all source miners assigned (' + sourceIds.length + ')');
+        }
+        if(energy < settings.minHaulEnergy) {
+            roomReasons.push('remote energy ' + energy + ' < minHaulEnergy ' + settings.minHaulEnergy);
+        }
+        else {
+            roomReasons.push('remoteHauler already assigned');
+        }
+
+        reasons.push(remote.name + ': ' + roomReasons.join('; '));
+    }
+
+    return {
+        request: null,
+        reasons: reasons.length ? reasons : ['no remote spawn need found']
+    };
+}
+
+function getSpawnRequest(room) {
+    var settings = updateRemoteMemory(room);
+    return getRemoteSpawnDecision(room, settings).request;
+}
+
+function getSpawnManagerState(room, spawnManager) {
+    if(!room ||
+        !spawnManager ||
+        !spawnManager.countRoles ||
+        !spawnManager.getTargets ||
+        !spawnManager.getSpawnRole) {
+        return null;
+    }
+
+    var counts = spawnManager.countRoles(room);
+    var targets = spawnManager.getTargets(room, counts);
+    var localRole = spawnManager.getSpawnRole(counts, targets);
+
+    return {
+        counts: counts,
+        targets: targets,
+        localRole: localRole
+    };
+}
+
+function getSpawnAvailabilityBlocker(room) {
+    var spawns = room.find(FIND_MY_STRUCTURES, {
+        filter: function(structure) {
+            return structure.structureType == STRUCTURE_SPAWN;
+        }
+    });
+
+    if(!spawns.length) {
+        return 'no owned spawn';
+    }
+
+    for(var i = 0; i < spawns.length; i++) {
+        if(!spawns[i].spawning) {
+            return null;
         }
     }
 
-    return null;
+    return 'all spawns busy';
+}
+
+function getRemoteSpawnReportLine(room, settings, spawnManager) {
+    if(!room) {
+        return 'remote spawn blockedBy=home room not visible';
+    }
+
+    var spawnState = getSpawnManagerState(room, spawnManager);
+    var spawnBlockers = [];
+    var availabilityBlocker = getSpawnAvailabilityBlocker(room);
+    if(availabilityBlocker) {
+        spawnBlockers.push(availabilityBlocker);
+    }
+
+    if(spawnState && spawnState.localRole) {
+        spawnBlockers.push(
+            'local spawn priority ' +
+            spawnState.localRole + ' ' +
+            spawnState.counts[spawnState.localRole] + '/' +
+            spawnState.targets[spawnState.localRole]
+        );
+    }
+
+    if(spawnBlockers.length) {
+        return 'remote spawn blockedBy=' + spawnBlockers.join(', ');
+    }
+
+    var decision = getRemoteSpawnDecision(room, settings);
+    if(!decision.request) {
+        return 'remote spawn blockedBy=' + decision.reasons.join(', ');
+    }
+
+    var line = 'remote spawn next=' + decision.request.role +
+        ' -> ' + decision.request.memory.targetRoom;
+    if(decision.request.memory.sourceId) {
+        line += ' source=' + decision.request.memory.sourceId;
+    }
+
+    if(spawnState &&
+        spawnManager &&
+        spawnManager.getSpawnBodyDecision) {
+        var bodyDecision = spawnManager.getSpawnBodyDecision(
+            room,
+            decision.request.role,
+            decision.request.bodyType,
+            spawnState.counts,
+            spawnState.targets
+        );
+
+        if(bodyDecision.body) {
+            line += ' readyEnergy=' + bodyDecision.desiredCost + '/' + room.energyCapacityAvailable;
+        }
+        else {
+            line += ' waitingEnergy=' + room.energyAvailable + '/' + bodyDecision.desiredCost;
+        }
+    }
+
+    if(decision.detail) {
+        line += ' reason=' + decision.detail;
+    }
+
+    return line;
 }
 
 function findHomeDeliveryTarget(creep) {

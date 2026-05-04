@@ -187,7 +187,7 @@ function runCreep(creep) {
 
 function initializeConsoleHelpers() {
     global.remoteReport = function(roomName) {
-        return remoteManager.getReport(roomName);
+        return remoteManager.getReport(roomName, spawnManager);
     };
 }
 

@@ -891,6 +891,8 @@ var spawnManager = {
     },
 
     countRoles: countRoles,
+    getSpawnBodyDecision: getSpawnBodyDecision,
+    getSpawnRole: getSpawnRole,
     getTargets: getTargets
 };
 
