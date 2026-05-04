@@ -297,6 +297,19 @@ function canReachBeforeDecay(creep, target, range) {
         return false;
     }
 
+    var nearestDecay = null;
+    if(sourceTicks !== null) {
+        nearestDecay = sourceTicks;
+    }
+
+    if(targetTicks !== null) {
+        nearestDecay = nearestDecay === null ? targetTicks : Math.min(nearestDecay, targetTicks);
+    }
+
+    if(nearestDecay === null || nearestDecay > minimumTravelTicks + 75) {
+        return true;
+    }
+
     var travelTicks = getTravelTicks(creep, targetPos, targetRange);
     if(travelTicks === null) {
         return false;

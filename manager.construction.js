@@ -2467,6 +2467,31 @@ function planDefense(room, settings, totalBudget) {
     return placed;
 }
 
+function shouldRunConstructionPlanner(room, settings, totalSites) {
+    if(typeof Game === 'undefined') {
+        return true;
+    }
+
+    if(room.memory.forceConstructionPlanner === true) {
+        delete room.memory.forceConstructionPlanner;
+        return true;
+    }
+
+    if(settings.autoTowers !== false && needsMore(room, STRUCTURE_TOWER)) {
+        return true;
+    }
+
+    if(settings.autoExitWalls !== false && room.memory.exitWallsSealed !== true) {
+        return true;
+    }
+
+    var interval = typeof settings.plannerInterval == 'number' ?
+        Math.max(1, settings.plannerInterval) :
+        10;
+    var lastRun = room.memory.lastConstructionPlannerRun || 0;
+    return Game.time - lastRun >= interval;
+}
+
 var PLANNER_VISUAL_COLORS = {};
 PLANNER_VISUAL_COLORS[STRUCTURE_EXTENSION] = '#ffe066';
 PLANNER_VISUAL_COLORS[STRUCTURE_TOWER] = '#ff6666';
@@ -2900,6 +2925,14 @@ var constructionManager = {
         planPriorityTowers(room, settings, 2);
         var maxTotalSites = settings.maxTotalSites || 20;
         var totalSites = room.find(FIND_CONSTRUCTION_SITES).length;
+        if(!shouldRunConstructionPlanner(room, settings, totalSites)) {
+            drawConstructionPlannerVisuals(room, settings);
+            return;
+        }
+
+        if(typeof Game !== 'undefined') {
+            room.memory.lastConstructionPlannerRun = Game.time;
+        }
 
         if(totalSites >= maxTotalSites) {
             debug.log(
