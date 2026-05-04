@@ -128,6 +128,10 @@ function initializeRoomMemory(room) {
 }
 
 function runCreep(creep) {
+    if(creep.spawning) {
+        return;
+    }
+
     var isRemoteRole = creep.memory.role == 'remoteMiner' ||
         creep.memory.role == 'remoteHauler' ||
         (creep.memory.role == 'transporter' && creep.memory.remoteHauling);
