@@ -85,6 +85,55 @@ function cleanupCreepMemory() {
     }
 }
 
+function getOwnedRoomNames() {
+    var ownedRooms = {};
+
+    for(var roomName in Game.rooms) {
+        var room = Game.rooms[roomName];
+        if(room.controller && room.controller.my) {
+            ownedRooms[roomName] = true;
+        }
+    }
+
+    return ownedRooms;
+}
+
+function cleanupInvalidRoomMemory() {
+    if(!Memory.rooms) {
+        Memory.rooms = {};
+    }
+
+    var ownedRooms = getOwnedRoomNames();
+    var validRooms = {};
+
+    for(var visibleRoomName in Game.rooms) {
+        validRooms[visibleRoomName] = true;
+    }
+
+    for(var ownedRoomName in ownedRooms) {
+        validRooms[ownedRoomName] = true;
+
+        var ownedMemory = Memory.rooms[ownedRoomName];
+        var remoteRooms = ownedMemory && ownedMemory.remote && ownedMemory.remote.rooms;
+        if(!remoteRooms) {
+            continue;
+        }
+
+        for(var remoteRoomName in remoteRooms) {
+            validRooms[remoteRoomName] = true;
+        }
+    }
+
+    for(var memoryRoomName in Memory.rooms) {
+        if(validRooms[memoryRoomName]) {
+            continue;
+        }
+
+        delete Memory.rooms[memoryRoomName];
+        debug.log('debugRoles', 'Cleared stale room memory for ' + memoryRoomName, 1);
+    }
+}
+
 function initializeRoomMemory(room) {
     if(!Memory.rooms) {
         Memory.rooms = {};
@@ -213,6 +262,7 @@ module.exports.loop = function () {
     debug.initialize();
     initializeConsoleHelpers();
     cleanupCreepMemory();
+    cleanupInvalidRoomMemory();
 
     for(var roomName in Game.rooms) {
         initializeRoomMemory(Game.rooms[roomName]);
