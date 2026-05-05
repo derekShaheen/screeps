@@ -83,6 +83,17 @@ function canHarvestRemoteRoom(room) {
         !hasHostileTower(room);
 }
 
+function isPersistentRemoteBlockReason(reason) {
+    if(!reason) {
+        return false;
+    }
+
+    return reason == 'hostile tower' ||
+        reason == 'no controller' ||
+        reason.indexOf('controller owned by ') === 0 ||
+        reason.indexOf('controller reserved by ') === 0;
+}
+
 function getRoomLinearDistance(homeRoomName, targetRoomName) {
     if(typeof Game.map.getRoomLinearDistance != 'function') {
         return 1;
@@ -440,6 +451,10 @@ function canUseRemote(room, remoteName, remoteMemory, settings) {
         return false;
     }
 
+    if(isPersistentRemoteBlockReason(remoteMemory.reason)) {
+        return false;
+    }
+
     return remoteMemory.status == 'ready' || remoteMemory.status == 'unknown';
 }
 
@@ -515,6 +530,11 @@ function getRemoteExplorationBlockers(room, remoteName, remoteMemory, settings) 
 
     if(remoteMemory.unsafeUntil && remoteMemory.unsafeUntil > Game.time) {
         blockers.push('unsafe cooldown ' + (remoteMemory.unsafeUntil - Game.time));
+    }
+
+    if((remoteMemory.status == 'ready' || remoteMemory.status == 'unknown') &&
+        isPersistentRemoteBlockReason(remoteMemory.reason)) {
+        blockers.push('remembered ' + remoteMemory.reason);
     }
 
     if(remoteMemory.status != 'ready' && remoteMemory.status != 'unknown') {
