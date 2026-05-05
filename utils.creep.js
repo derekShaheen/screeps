@@ -262,6 +262,7 @@ function moveTo(creep, target, stroke, intentMessage, intentKey) {
 
     var stuckTicks = updateStuckState(creep, target);
     var options = {
+        ignoreCreeps: true,
         reusePath: 5
     };
 
@@ -271,7 +272,6 @@ function moveTo(creep, target, stroke, intentMessage, intentKey) {
 
     if(stuckTicks >= 2) {
         options.reusePath = 0;
-        options.ignoreCreeps = true;
         debug.log('debugRoles', creep.name + ' repathing through traffic after ' + stuckTicks + ' stuck ticks', 5);
     }
 
