@@ -414,6 +414,11 @@ function updateVisibleRemoteRoom(homeRoom, remoteName, remoteMemory) {
 }
 
 function updateRemoteMemory(room) {
+    if(room._remoteMemoryCacheTick === Game.time) {
+        return room.memory.remote;
+    }
+    room._remoteMemoryCacheTick = Game.time;
+
     var settings = getSettings(room);
     if(settings.enabled === false ||
         !room.controller ||

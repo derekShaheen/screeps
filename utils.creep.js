@@ -476,6 +476,10 @@ function getFallbackRetreatTarget(creep) {
 }
 
 function retreatFromHostiles(creep, range) {
+    if(!creep.room.memory.defenseMode) {
+        return false;
+    }
+
     var fleeRange = range || 5;
     var threats = findNearbyThreats(creep, fleeRange);
     if(!threats.length) {
