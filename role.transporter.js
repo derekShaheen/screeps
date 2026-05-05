@@ -1,5 +1,6 @@
 var creepUtils = require('utils.creep');
 var debug = require('utils.debug');
+var labManager = require('manager.lab');
 var remoteManager = require('manager.remote');
 
 var TOWER_PEACE_REFILL_TARGET = 600;
@@ -83,6 +84,128 @@ function withdrawEnergy(creep, target) {
     }
 
     debug.log('debugRoles', creep.name + ' withdraw failed from ' + target.structureType + ': ' + result, 5);
+    return false;
+}
+
+function getCarriedNonEnergy(creep) {
+    for(var resourceType in creep.store) {
+        if(resourceType != RESOURCE_ENERGY && creep.store[resourceType] > 0) {
+            return resourceType;
+        }
+    }
+
+    return null;
+}
+
+function withdrawResource(creep, task) {
+    var source = Game.getObjectById(task.sourceId);
+    var target = Game.getObjectById(task.targetId);
+    if(!source || !target || !source.store || !target.store) {
+        delete creep.memory.labLogisticsTargetId;
+        delete creep.memory.labLogisticsResourceType;
+        return false;
+    }
+
+    var amount = Math.min(
+        task.amount || creep.store.getFreeCapacity(),
+        creep.store.getFreeCapacity(),
+        source.store[task.resourceType] || 0,
+        target.store.getFreeCapacity(task.resourceType)
+    );
+    if(amount <= 0) {
+        delete creep.memory.labLogisticsTargetId;
+        delete creep.memory.labLogisticsResourceType;
+        return false;
+    }
+
+    var result = creep.withdraw(source, task.resourceType, amount);
+    if(result == ERR_NOT_IN_RANGE) {
+        creepUtils.moveTo(creep, source, '#cc66ff', task.label || 'lab', 'move:labResource');
+        return true;
+    }
+
+    if(result == OK) {
+        creep.memory.labLogisticsTargetId = task.targetId;
+        creep.memory.labLogisticsResourceType = task.resourceType;
+        creepUtils.announceIntent(creep, 'action:labWithdraw', task.label || 'lab');
+        debug.log(
+            'debugRoles',
+            creep.name + ' withdrew ' + task.resourceType + ' for ' +
+                (task.label || 'lab') + ' at ' + formatPos(source.pos),
+            5
+        );
+        return true;
+    }
+
+    debug.log('debugRoles', creep.name + ' lab withdraw failed: ' + result, 5);
+    return false;
+}
+
+function transferResource(creep, target, resourceType) {
+    if(!target || !target.store) {
+        delete creep.memory.labLogisticsTargetId;
+        delete creep.memory.labLogisticsResourceType;
+        return false;
+    }
+
+    var result = creep.transfer(target, resourceType);
+    if(result == ERR_NOT_IN_RANGE) {
+        creepUtils.moveTo(creep, target, '#cc66ff', 'go lab', 'move:labResource');
+        return true;
+    }
+
+    if(result == OK) {
+        delete creep.memory.labLogisticsTargetId;
+        delete creep.memory.labLogisticsResourceType;
+        creepUtils.announceIntent(creep, 'action:labTransfer', 'lab');
+        debug.log(
+            'debugRoles',
+            creep.name + ' delivered ' + resourceType + ' to ' +
+                target.structureType + ' at ' + formatPos(target.pos),
+            5
+        );
+        return true;
+    }
+
+    if(result == ERR_FULL || result == ERR_INVALID_TARGET) {
+        delete creep.memory.labLogisticsTargetId;
+        delete creep.memory.labLogisticsResourceType;
+    }
+
+    debug.log('debugRoles', creep.name + ' lab transfer failed: ' + result, 5);
+    return false;
+}
+
+function runLabLogistics(creep) {
+    if(creep.memory.remoteHauling) {
+        return false;
+    }
+
+    var carried = getCarriedNonEnergy(creep);
+    if(carried) {
+        var target = labManager.getDeliveryTarget(creep, carried);
+        if(target) {
+            return transferResource(creep, target, carried);
+        }
+
+        debug.log('debugRoles', creep.name + ' has no non-energy delivery target for ' + carried, 10);
+        idleNearBase(creep);
+        return true;
+    }
+
+    if(findSpawnFillTarget(creep) || findTowerFillTarget(creep, TOWER_PEACE_REFILL_TARGET)) {
+        return false;
+    }
+
+    if(creep.store.getUsedCapacity() > 0 || creep.store.getFreeCapacity() <= 0) {
+        return false;
+    }
+
+    var task = labManager.getLogisticsTask(creep);
+    if(task) {
+        return withdrawResource(creep, task);
+    }
+
     return false;
 }
 
@@ -203,6 +326,10 @@ var roleTransporter = {
                 remoteManager.markUnsafe(creep.memory.homeRoom || creep.room.name, creep.memory.targetRoom || creep.room.name, 'remote unsafe');
             }
             return remoteManager.moveHome(creep, 'retreat');
+        }
+
+        if(runLabLogistics(creep)) {
+            return;
         }
 
         creepUtils.updateWorkingState(creep, 'deliver', 'haul');
