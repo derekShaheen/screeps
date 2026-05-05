@@ -2,6 +2,7 @@ var debug = require('utils.debug');
 var constructionManager = require('manager.construction');
 var labManager = require('manager.lab');
 var linkManager = require('manager.link');
+var marketManager = require('manager.market');
 var remoteManager = require('manager.remote');
 var spawnManager = require('manager.spawn');
 var towerManager = require('manager.tower');
@@ -65,6 +66,9 @@ var DEFAULT_ROOM_MEMORY = {
         minHaulEnergy: 300,
         staleRoomTicks: 1500,
         unsafeRoomCooldown: 500
+    },
+    market: {
+        enabled: true
     }
 };
 
@@ -128,6 +132,16 @@ function initializeRoomMemory(room) {
             memory.remote[remoteKey] = DEFAULT_ROOM_MEMORY.remote[remoteKey];
         }
     }
+
+    if(!memory.market) {
+        memory.market = {};
+    }
+
+    for(var marketKey in DEFAULT_ROOM_MEMORY.market) {
+        if(memory.market[marketKey] === undefined) {
+            memory.market[marketKey] = DEFAULT_ROOM_MEMORY.market[marketKey];
+        }
+    }
 }
 
 function runCreep(creep) {
@@ -189,6 +203,10 @@ function initializeConsoleHelpers() {
     global.remoteReport = function(roomName) {
         return remoteManager.getReport(roomName, spawnManager);
     };
+
+    global.marketReport = function(roomName) {
+        return marketManager.getReport(roomName);
+    };
 }
 
 module.exports.loop = function () {
@@ -210,6 +228,10 @@ module.exports.loop = function () {
 
     for(var labRoomName in Game.rooms) {
         labManager.run(Game.rooms[labRoomName]);
+    }
+
+    for(var marketRoomName in Game.rooms) {
+        marketManager.run(Game.rooms[marketRoomName]);
     }
 
     for(var remoteRoomName in Game.rooms) {

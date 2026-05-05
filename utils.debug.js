@@ -4,6 +4,7 @@ var DEFAULT_SETTINGS = {
     debugSpawn: true,
     debugDefense: true,
     debugConstruction: true,
+    debugMarket: true,
     debugConstructionPlanner: false,
     debugConstructionPlannerLimit: 120,
     debugVisuals: true,
