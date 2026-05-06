@@ -181,6 +181,28 @@ function siteIs(site, structureType) {
     return site.structureType == structureType;
 }
 
+function getRemoteWorkerCounts(room) {
+    var counts = {
+        scout: 0,
+        reserver: 0,
+        remoteMiner: 0,
+        remoteHauler: 0
+    };
+
+    for(var name in Game.creeps) {
+        var creep = Game.creeps[name];
+        if(creep.memory.homeRoom != room.name || creep.spawning) {
+            continue;
+        }
+
+        if(counts[creep.memory.role] !== undefined) {
+            counts[creep.memory.role]++;
+        }
+    }
+
+    return counts;
+}
+
 var uiManager = {
     run: function(room) {
         if(!debug.enabled('debugVisuals')) {
@@ -188,12 +210,11 @@ var uiManager = {
         }
 
         var counts = spawnManager.countRoles(room);
+    var remoteCounts = getRemoteWorkerCounts(room);
         var targets = spawnManager.getTargets(room, counts);
-        var hostiles = room.find(FIND_HOSTILE_CREEPS).length;
         var sites = room.find(FIND_CONSTRUCTION_SITES).length;
         var controller = room.controller;
         var rcl = controller ? controller.level : 0;
-        var wallTarget = room.memory.wallTargetHits || 1000;
         var startupKey = getStartupKey();
 
         var lines = [
@@ -206,12 +227,13 @@ var uiManager = {
                 ' | U ' + counts.upgrader + '/' + targets.upgrader +
                 ' | M ' + counts.mineralHarvester + '/' + targets.mineralHarvester +
                 ' | D ' + counts.defender + '/' + targets.defender,
+            'Remote: Sc ' + remoteCounts.scout +
+                ' | Re ' + remoteCounts.reserver +
+                ' | RM ' + remoteCounts.remoteMiner +
+                ' | RH ' + remoteCounts.remoteHauler,
             'Spawn: ' + getSpawnText(room),
-            'Hostiles: ' + hostiles,
             'Towers: ' + getTowerText(room),
-            'Walls: target ' + wallTarget,
             'Infra sites: ' + getInfrastructureSiteText(room),
-            'Defense sites: ' + getDefenseSiteText(room),
             'Sites: ' + sites
         ];
 
