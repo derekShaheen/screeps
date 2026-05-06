@@ -682,6 +682,53 @@ function countRemoteCreeps(homeRoomName, role, remoteRoomName, sourceId) {
     return count;
 }
 
+function needsRemoteScout(room, remoteName, remoteMemory, settings) {
+    if(!remoteMemory || !canUseRemote(room, remoteName, remoteMemory, settings)) {
+        return false;
+    }
+
+    return remoteMemory.status == 'unknown' ||
+        !remoteMemory.sourceIds ||
+        remoteMemory.sourceIds.length === 0;
+}
+
+function makeScoutSpawnRequest(homeRoomName, remoteName) {
+    return {
+        role: 'scout',
+        bodyType: 'scout',
+        memory: {
+            role: 'scout',
+            homeRoom: homeRoomName,
+            targetRoom: remoteName,
+            working: false
+        }
+    };
+}
+
+function getScoutTarget(homeRoomName, currentTargetRoom) {
+    var homeRoom = Game.rooms[homeRoomName];
+    if(!homeRoom) {
+        return null;
+    }
+
+    var settings = updateRemoteMemory(homeRoom);
+    if(currentTargetRoom &&
+        settings.rooms[currentTargetRoom] &&
+        needsRemoteScout(homeRoom, currentTargetRoom, settings.rooms[currentTargetRoom], settings)) {
+        return currentTargetRoom;
+    }
+
+    var rooms = getActiveRemoteRooms(homeRoom);
+    for(var i = 0; i < rooms.length; i++) {
+        if(needsRemoteScout(homeRoom, rooms[i].name, rooms[i].memory, settings) &&
+            countRemoteCreeps(homeRoomName, 'scout', rooms[i].name) === 0) {
+            return rooms[i].name;
+        }
+    }
+
+    return null;
+}
+
 function hasSourceContainer(sourceId) {
     if(!sourceId) {
         return false;
@@ -785,16 +832,16 @@ function getRemoteSpawnDecision(room, settings) {
         var remote = rooms[i];
         var sourceIds = remote.memory.sourceIds || [];
 
-        if(remote.memory.status == 'unknown' || !sourceIds.length) {
-            if(countRemoteCreeps(room.name, 'remoteMiner', remote.name) === 0) {
+        if(needsRemoteScout(room, remote.name, remote.memory, settings)) {
+            if(countRemoteCreeps(room.name, 'scout', remote.name) === 0) {
                 return {
-                    request: makeRemoteSpawnRequest(room.name, remote.name),
+                    request: makeScoutSpawnRequest(room.name, remote.name),
                     reasons: [],
                     detail: remote.name + ': scout/source discovery needed'
                 };
             }
 
-            reasons.push(remote.name + ': scout remoteMiner already assigned');
+            reasons.push(remote.name + ': scout already assigned');
             continue;
         }
 
@@ -1151,6 +1198,7 @@ function run(room) {
 module.exports = {
     deliverHome: deliverHome,
     findRemoteEnergyTarget: findRemoteEnergyTarget,
+    getScoutTarget: getScoutTarget,
     getSettings: getSettings,
     getReport: getReport,
     getSpawnRequest: getSpawnRequest,

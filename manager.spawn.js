@@ -14,6 +14,11 @@ var BASE_TARGETS = {
 var ROLE_PRIORITY = ['harvester', 'transporter', 'upgrader', 'builder', 'defender', 'mineralHarvester'];
 
 var BODIES = {
+    scout: [
+        [MOVE],
+        [MOVE, MOVE],
+        [MOVE, MOVE, MOVE]
+    ],
     harvester: [
         [WORK, CARRY, MOVE],
         [WORK, WORK, CARRY, MOVE],
@@ -82,6 +87,7 @@ var MIN_DEFENDER_HEALER_BODY = [TOUGH, HEAL, MOVE];
 var MAX_CREEP_PARTS = 50;
 
 var LOW_STAFF_BODY_BUDGET = {
+    scout: 150,
     harvester: 750,
     transporter: 800,
     upgrader: 800,
@@ -95,6 +101,7 @@ var LOW_STAFF_BODY_BUDGET = {
 };
 
 var BODY_GROWTH = {
+    scout: [MOVE],
     harvester: [WORK, CARRY, MOVE],
     transporter: [CARRY, CARRY, MOVE],
     upgrader: [WORK, WORK, CARRY, MOVE],

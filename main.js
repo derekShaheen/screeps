@@ -14,6 +14,7 @@ var roleDefender = require('role.defender');
 var roleMineralHarvester = require('role.mineralHarvester');
 var roleRemoteHauler = require('role.remoteHauler');
 var roleRemoteMiner = require('role.remoteMiner');
+var roleScout = require('role.scout');
 var roleTransporter = require('role.transporter');
 var roleUpgrader = require('role.upgrader');
 
@@ -199,6 +200,7 @@ function runCreep(creep) {
     }
 
     var isRemoteRole = creep.memory.role == 'remoteMiner' ||
+        creep.memory.role == 'scout' ||
         creep.memory.role == 'remoteHauler' ||
         (creep.memory.role == 'transporter' && creep.memory.remoteHauling);
     if(creep.memory.role != 'defender' && !isRemoteRole && creepUtils.retreatFromHostiles(creep, 5)) {
@@ -237,6 +239,11 @@ function runCreep(creep) {
 
     if(creep.memory.role == 'remoteMiner') {
         roleRemoteMiner.run(creep);
+        return;
+    }
+
+    if(creep.memory.role == 'scout') {
+        roleScout.run(creep);
         return;
     }
 
