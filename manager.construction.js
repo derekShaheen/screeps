@@ -1,5 +1,6 @@
 var debug = require('utils.debug');
 var defenseUtils = require('utils.defense');
+var remoteManager = require('manager.remote');
 
 var BUILDING_STRUCTURES = {};
 BUILDING_STRUCTURES[STRUCTURE_EXTENSION] = true;
@@ -515,6 +516,68 @@ function planCoreStructure(room, structureType, minRange, maxRange, remaining) {
     }
 
     return placed;
+}
+
+function getBootstrapSpawnAnchor(room) {
+    if(room.controller) {
+        return room.controller.pos;
+    }
+
+    var sources = room.find(FIND_SOURCES);
+    if(sources.length) {
+        return sources[0].pos;
+    }
+
+    return new RoomPosition(25, 25, room.name);
+}
+
+function sortBootstrapSpawnCandidates(room, candidates, anchorPos) {
+    var sources = room.find(FIND_SOURCES);
+    candidates.sort(function(a, b) {
+        var aSwamp = getTerrain(room, a.x, a.y) == TERRAIN_MASK_SWAMP ? 3 : 0;
+        var bSwamp = getTerrain(room, b.x, b.y) == TERRAIN_MASK_SWAMP ? 3 : 0;
+        var aScore = aSwamp + a.getRangeTo(anchorPos) * 2;
+        var bScore = bSwamp + b.getRangeTo(anchorPos) * 2;
+
+        for(var i = 0; i < sources.length; i++) {
+            aScore += a.getRangeTo(sources[i]) * 0.5;
+            bScore += b.getRangeTo(sources[i]) * 0.5;
+        }
+
+        return aScore - bScore || a.x - b.x || a.y - b.y;
+    });
+}
+
+function planBootstrapSpawn(room, remaining) {
+    if(remaining <= 0 || !needsMore(room, STRUCTURE_SPAWN) || getPrimarySpawn(room)) {
+        return 0;
+    }
+
+    var anchorPos = getBootstrapSpawnAnchor(room);
+    if(!anchorPos) {
+        return 0;
+    }
+
+    var candidates = getCandidateRingAroundPos(room, anchorPos, 3, 6);
+    sortBootstrapSpawnCandidates(room, candidates, anchorPos);
+
+    for(var i = 0; i < candidates.length; i++) {
+        var result = createSite(room, candidates[i], STRUCTURE_SPAWN);
+        if(result == OK) {
+            debug.log(
+                'debugConstruction',
+                room.name + ' planned bootstrap spawn at ' + formatPos(candidates[i]),
+                1
+            );
+            return 1;
+        }
+
+        if(result == ERR_FULL) {
+            return 0;
+        }
+    }
+
+    return 0;
 }
 
 function getStructures(room, structureType) {
@@ -1039,6 +1102,195 @@ function planRoadPath(room, fromPos, toPos, range, remaining) {
         }
 
         if(result == ERR_FULL) {
+            break;
+        }
+    }
+
+    return placed;
+}
+
+function getOppositeExitFindConstant(direction) {
+    var value = parseInt(direction, 10);
+    if(value == FIND_EXIT_TOP) {
+        return FIND_EXIT_BOTTOM;
+    }
+
+    if(value == FIND_EXIT_RIGHT) {
+        return FIND_EXIT_LEFT;
+    }
+
+    if(value == FIND_EXIT_BOTTOM) {
+        return FIND_EXIT_TOP;
+    }
+
+    if(value == FIND_EXIT_LEFT) {
+        return FIND_EXIT_RIGHT;
+    }
+
+    return null;
+}
+
+function getInteriorExitPos(exitPos) {
+    var x = exitPos.x;
+    var y = exitPos.y;
+
+    if(y === 0) {
+        y = 1;
+    }
+    else if(y === 49) {
+        y = 48;
+    }
+    else if(x === 0) {
+        x = 1;
+    }
+    else if(x === 49) {
+        x = 48;
+    }
+
+    return new RoomPosition(x, y, exitPos.roomName);
+}
+
+function isRemoteRoadAnchorPos(room, pos) {
+    if(getTerrain(room, pos.x, pos.y) == TERRAIN_MASK_WALL) {
+        return false;
+    }
+
+    var structures = pos.lookFor(LOOK_STRUCTURES);
+    for(var i = 0; i < structures.length; i++) {
+        if(structures[i].structureType == STRUCTURE_ROAD ||
+            structures[i].structureType == STRUCTURE_CONTAINER) {
+            continue;
+        }
+
+        if(structures[i].structureType == STRUCTURE_RAMPART &&
+            (structures[i].my || structures[i].isPublic)) {
+            continue;
+        }
+
+        return false;
+    }
+
+    return true;
+}
+
+function getRemoteRoadTargets(room) {
+    var targets = [];
+    var sources = room.find(FIND_SOURCES);
+    for(var i = 0; i < sources.length; i++) {
+        targets.push({
+            pos: sources[i].pos,
+            range: 1
+        });
+    }
+
+    if(room.controller) {
+        targets.push({
+            pos: room.controller.pos,
+            range: 1
+        });
+    }
+
+    return targets;
+}
+
+function getRemoteRoadEntryAnchor(room, exitDirection, targets) {
+    var findConstant = getOppositeExitFindConstant(exitDirection);
+    if(findConstant === null) {
+        return null;
+    }
+
+    var exitPositions = room.find(findConstant);
+    var candidates = [];
+    var seen = {};
+    for(var i = 0; i < exitPositions.length; i++) {
+        var interior = getInteriorExitPos(exitPositions[i]);
+        var key = getPosKey(interior);
+        if(seen[key] || !isRemoteRoadAnchorPos(room, interior)) {
+            continue;
+        }
+
+        seen[key] = true;
+        candidates.push(interior);
+    }
+
+    if(!candidates.length) {
+        return null;
+    }
+
+    candidates.sort(function(a, b) {
+        var aScore = 0;
+        var bScore = 0;
+        for(var index = 0; index < targets.length; index++) {
+            aScore += a.getRangeTo(targets[index].pos);
+            bScore += b.getRangeTo(targets[index].pos);
+        }
+
+        return aScore - bScore || a.x - b.x || a.y - b.y;
+    });
+
+    return candidates[0];
+}
+
+function planRemoteRoads(homeRoom, remaining) {
+    if(remaining <= 0) {
+        return 0;
+    }
+
+    var settings = remoteManager.getSettings(homeRoom);
+    if(!settings || !settings.rooms) {
+        return 0;
+    }
+
+    var remoteNames = Object.keys(settings.rooms);
+    remoteNames.sort(function(a, b) {
+        var aMemory = settings.rooms[a] || {};
+        var bMemory = settings.rooms[b] || {};
+        return (aMemory.distance || 1) - (bMemory.distance || 1) || a.localeCompare(b);
+    });
+
+    var placed = 0;
+    for(var i = 0; i < remoteNames.length && placed < remaining; i++) {
+        var remoteName = remoteNames[i];
+        var remoteMemory = settings.rooms[remoteName];
+        var remoteRoom = Game.rooms[remoteName];
+        if(!remoteRoom ||
+            !remoteMemory ||
+            remoteMemory.status != 'ready' ||
+            !remoteMemory.exit ||
+            remoteManager.isRemoteUsable(homeRoom.name, remoteName) !== true) {
+            continue;
+        }
+
+        var targets = getRemoteRoadTargets(remoteRoom);
+        if(!targets.length) {
+            continue;
+        }
+
+        var entryAnchor = getRemoteRoadEntryAnchor(remoteRoom, remoteMemory.exit, targets);
+        if(!entryAnchor) {
+            continue;
+        }
+
+        var remotePlaced = 0;
+
+        for(var targetIndex = 0; targetIndex < targets.length && placed < remaining; targetIndex++) {
+            var added = planRoadPath(
+                remoteRoom,
+                entryAnchor,
+                targets[targetIndex].pos,
+                targets[targetIndex].range,
+                remaining - placed
+            );
+            remotePlaced += added;
+            placed += added;
+        }
+
+        if(remotePlaced > 0) {
+            debug.log(
+                'debugConstruction',
+                homeRoom.name + ' planned ' + remotePlaced + ' remote road site(s) in ' + remoteName,
+                1
+            );
             break;
         }
     }
@@ -1943,6 +2195,10 @@ function planInfrastructure(room, settings, totalBudget) {
     var remaining = Math.min(siteBudget, maxSites - existingSites);
     var placed = 0;
 
+    if(settings.autoSpawns !== false && placed < remaining && !getPrimarySpawn(room)) {
+        placed += planBootstrapSpawn(room, remaining - placed);
+    }
+
     if(settings.autoRoads !== false && placed < remaining) {
         var earlyRoadBudget = settings.maxEarlyRoadSitesPerTick || 2;
         placed += planEarlyRoads(room, Math.min(remaining - placed, earlyRoadBudget));
@@ -1990,6 +2246,10 @@ function planInfrastructure(room, settings, totalBudget) {
 
     if(settings.autoRoads !== false && placed < remaining && hasEarlyExtensionBatch(room, settings)) {
         placed += planRoads(room, remaining - placed);
+    }
+
+    if(settings.autoRoads !== false && placed < remaining && hasEarlyExtensionBatch(room, settings)) {
+        placed += planRemoteRoads(room, remaining - placed);
     }
 
     if(placed > 0) {
