@@ -1016,6 +1016,10 @@ function getRemoteSpawnDecision(room, settings) {
     for(var i = 0; i < rooms.length; i++) {
         var remote = rooms[i];
         var sourceIds = remote.memory.sourceIds || [];
+        var readyMinerSources = countReadyRemoteMinerSources(sourceIds);
+        var desiredHaulers = readyMinerSources * REMOTE_HAULERS_PER_MINER;
+        var energy = getRemoteEnergyAmount(remote.name);
+        var haulers = countRemoteCreeps(room.name, 'remoteHauler', remote.name);
 
         if(needsRemoteScout(room, remote.name, remote.memory, settings)) {
             if(countRemoteCreeps(room.name, 'scout', remote.name) === 0) {
@@ -1028,6 +1032,17 @@ function getRemoteSpawnDecision(room, settings) {
 
             reasons.push(remote.name + ': scout already assigned');
             continue;
+        }
+
+        if(desiredHaulers > 0 &&
+            energy >= settings.minHaulEnergy &&
+            haulers < desiredHaulers) {
+            return {
+                request: makeRemoteHaulerSpawnRequest(room.name, remote.name),
+                reasons: [],
+                detail: remote.name + ': haulers ' + haulers + '/' + desiredHaulers +
+                    ' for ' + readyMinerSources + ' ready miner source(s)'
+            };
         }
 
         var missingMiner = false;
@@ -1070,21 +1085,6 @@ function getRemoteSpawnDecision(room, settings) {
             }
 
             roomReasons.push('claimer already assigned');
-        }
-
-        var readyMinerSources = countReadyRemoteMinerSources(sourceIds);
-        var desiredHaulers = readyMinerSources * REMOTE_HAULERS_PER_MINER;
-        var energy = getRemoteEnergyAmount(remote.name);
-        var haulers = countRemoteCreeps(room.name, 'remoteHauler', remote.name);
-        if(desiredHaulers > 0 &&
-            energy >= settings.minHaulEnergy &&
-            haulers < desiredHaulers) {
-            return {
-                request: makeRemoteHaulerSpawnRequest(room.name, remote.name),
-                reasons: [],
-                detail: remote.name + ': haulers ' + haulers + '/' + desiredHaulers +
-                    ' for ' + readyMinerSources + ' ready miner source(s)'
-            };
         }
 
         if(desiredHaulers === 0) {
