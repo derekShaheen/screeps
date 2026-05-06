@@ -300,6 +300,97 @@ function findDeliveryTarget(creep) {
         findStorageTarget(creep);
 }
 
+function getBootstrapWorkerPriority(creep) {
+    if(creep.memory.role == 'builder') {
+        return 1;
+    }
+
+    if(creep.memory.role == 'upgrader') {
+        return 2;
+    }
+
+    if(creep.memory.role == 'harvester') {
+        return 3;
+    }
+
+    return 99;
+}
+
+function findBootstrapWorkerTarget(creep) {
+    if(!creep.room.controller || !creep.room.controller.my) {
+        return null;
+    }
+
+    var spawns = creep.room.find(FIND_MY_STRUCTURES, {
+        filter: function(structure) {
+            return structure.structureType == STRUCTURE_SPAWN;
+        }
+    });
+    var storage = creep.room.find(FIND_STRUCTURES, {
+        filter: function(structure) {
+            return structure.structureType == STRUCTURE_STORAGE;
+        }
+    });
+
+    if(spawns.length || storage.length) {
+        return null;
+    }
+
+    var candidates = creep.room.find(FIND_MY_CREEPS, {
+        filter: function(otherCreep) {
+            if(otherCreep.name == creep.name || otherCreep.spawning) {
+                return false;
+            }
+
+            if(otherCreep.store.getFreeCapacity(RESOURCE_ENERGY) <= 0) {
+                return false;
+            }
+
+            return otherCreep.memory.role == 'builder' ||
+                otherCreep.memory.role == 'upgrader' ||
+                otherCreep.memory.role == 'harvester';
+        }
+    });
+
+    if(!candidates.length) {
+        return null;
+    }
+
+    candidates.sort(function(a, b) {
+        var priorityDiff = getBootstrapWorkerPriority(a) - getBootstrapWorkerPriority(b);
+        if(priorityDiff !== 0) {
+            return priorityDiff;
+        }
+
+        var freeCapacityDiff = b.store.getFreeCapacity(RESOURCE_ENERGY) - a.store.getFreeCapacity(RESOURCE_ENERGY);
+        if(freeCapacityDiff !== 0) {
+            return freeCapacityDiff;
+        }
+
+        return creep.pos.getRangeTo(a) - creep.pos.getRangeTo(b);
+    });
+
+    return candidates[0];
+}
+
+function shouldExportEnergyHome(creep) {
+    if(!creep.memory.homeRoom || creep.memory.homeRoom == creep.room.name) {
+        return false;
+    }
+
+    if(!creep.room.controller || !creep.room.controller.my) {
+        return false;
+    }
+
+    var spawns = creep.room.find(FIND_MY_STRUCTURES, {
+        filter: function(structure) {
+            return structure.structureType == STRUCTURE_SPAWN;
+        }
+    });
+
+    return spawns.length === 0;
+}
+
 function idleNearBase(creep) {
     var spawn = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
         filter: function(structure) {
@@ -319,6 +410,10 @@ function idleNearBase(creep) {
 
 var roleTransporter = {
     run: function(creep) {
+        if(!creep.memory.homeRoom) {
+            creep.memory.homeRoom = creep.room.name;
+        }
+
         if(creep.memory.remoteHauling &&
             (remoteManager.hasThreats(creep.room) ||
             (creep.room.name == creep.memory.targetRoom && remoteManager.hasHostileTower(creep.room)))) {
@@ -329,6 +424,11 @@ var roleTransporter = {
         }
 
         if(runLabLogistics(creep)) {
+            return;
+        }
+
+        if(!creep.memory.remoteHauling && creep.room.name != creep.memory.homeRoom) {
+            remoteManager.moveHome(creep, 'home');
             return;
         }
 
@@ -343,9 +443,19 @@ var roleTransporter = {
                 delete creep.memory.remoteHauling;
             }
 
+            if(shouldExportEnergyHome(creep) && remoteManager.deliverHome(creep)) {
+                return;
+            }
+
             var deliveryTarget = findDeliveryTarget(creep);
             if(deliveryTarget) {
                 creepUtils.transferEnergy(creep, deliveryTarget);
+                return;
+            }
+
+            var bootstrapWorker = findBootstrapWorkerTarget(creep);
+            if(bootstrapWorker) {
+                creepUtils.transferEnergy(creep, bootstrapWorker);
                 return;
             }
 
@@ -362,15 +472,6 @@ var roleTransporter = {
         if(sourceEnergy) {
             delete creep.memory.remoteHauling;
             withdrawEnergy(creep, sourceEnergy);
-            return;
-        }
-
-        var remoteEnergy = remoteManager.findRemoteEnergyTarget(creep, creep.room.name);
-        if(remoteEnergy) {
-            creep.memory.remoteHauling = true;
-            creep.memory.homeRoom = creep.room.name;
-            creep.memory.targetRoom = remoteEnergy.pos.roomName;
-            remoteManager.withdrawOrPickup(creep, remoteEnergy);
             return;
         }
 

@@ -224,7 +224,13 @@ function findStepAsidePosition(creep, target) {
                 continue;
             }
 
-            var pos = new RoomPosition(creep.pos.x + dx, creep.pos.y + dy, creep.pos.roomName);
+            var x = creep.pos.x + dx;
+            var y = creep.pos.y + dy;
+            if(x < 0 || x > 49 || y < 0 || y > 49) {
+                continue;
+            }
+
+            var pos = new RoomPosition(x, y, creep.pos.roomName);
             if(isWalkableMovePosition(creep, pos)) {
                 candidates.push(pos);
             }

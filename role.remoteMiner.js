@@ -268,6 +268,59 @@ function ensureContainerSite(creep, source) {
     return false;
 }
 
+function buildContainerSite(creep, source, site) {
+    if(!site) {
+        return false;
+    }
+
+    if(!creep.pos.isEqualTo(site.pos) && site.pos.lookFor(LOOK_CREEPS).length === 0) {
+        creepUtils.moveTo(creep, site, '#ffaa00', 'build box', 'move:remoteBox');
+        return true;
+    }
+
+    if(creep.store[RESOURCE_ENERGY] === 0) {
+        if(!creep.pos.inRangeTo(source, 1)) {
+            creepUtils.moveTo(creep, source, '#ffaa00', 'go mine', 'move:remoteMine');
+            return true;
+        }
+
+        var harvestResult = creep.harvest(source);
+        if(harvestResult == OK) {
+            creepUtils.announceIntent(creep, 'action:remoteHarvest', 'mine');
+            return true;
+        }
+
+        if(harvestResult == ERR_NOT_ENOUGH_RESOURCES) {
+            return waitForSourceRegen(creep, source);
+        }
+
+        if(harvestResult == ERR_NOT_OWNER) {
+            return workAtHomeAfterBlocked(creep, 'not harvestable');
+        }
+
+        debug.log('debugRoles', creep.name + ' remote site harvest failed at ' + formatPos(source.pos) + ': ' + harvestResult, 3);
+        return false;
+    }
+
+    var buildResult = creep.build(site);
+    if(buildResult == OK) {
+        creepUtils.announceIntent(creep, 'action:remoteBuild', 'build');
+        return true;
+    }
+
+    if(buildResult == ERR_NOT_IN_RANGE) {
+        creepUtils.moveTo(creep, site, '#ffaa00', 'build box', 'move:remoteBox');
+        return true;
+    }
+
+    if(buildResult == ERR_INVALID_TARGET) {
+        return false;
+    }
+
+    debug.log('debugRoles', creep.name + ' remote container build failed at ' + formatPos(site.pos) + ': ' + buildResult, 3);
+    return false;
+}
+
 function mineToContainer(creep, source, container) {
     if(creep.store[RESOURCE_ENERGY] > 0 && container.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
         var transferResult = creep.transfer(container, RESOURCE_ENERGY);
@@ -426,6 +479,11 @@ var roleRemoteMiner = {
 
         if(canBuildRemoteInfrastructure(creep)) {
             ensureContainerSite(creep, source);
+        }
+
+        var containerSite = getContainerSite(source);
+        if(containerSite && canBuildRemoteInfrastructure(creep)) {
+            return buildContainerSite(creep, source, containerSite);
         }
 
         var container = getSourceContainer(source);
