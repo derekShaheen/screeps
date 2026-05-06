@@ -257,10 +257,12 @@ var towerManager = {
         }
 
         if(!activeTowers.length) {
+            delete room.memory.towerRepairTargetId;
             return;
         }
 
         var attackTarget = findTowerAttackTarget(room, activeTowers, hostiles);
+        delete room.memory.towerRepairTargetId;
 
         for(var i = 0; i < activeTowers.length; i++) {
             var tower = activeTowers[i];
@@ -317,6 +319,7 @@ var towerManager = {
 
             var repairTarget = findRepairTarget(room);
             if(repairTarget) {
+                room.memory.towerRepairTargetId = repairTarget.id;
                 tower.repair(repairTarget);
                 debug.log('debugDefense', tower.id + ' repairing ' + repairTarget.structureType, 10);
             }

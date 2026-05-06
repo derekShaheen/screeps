@@ -201,8 +201,13 @@ function findConstructionTarget(creep, sites, allowAssisting) {
 
 function findCriticalRepairTarget(creep) {
     var room = creep.room;
+    var blockedTargetId = room.memory.towerRepairTargetId;
     var damaged = room.find(FIND_STRUCTURES, {
         filter: function(structure) {
+            if(blockedTargetId && structure.id == blockedTargetId) {
+                return false;
+            }
+
             if(structure.structureType == STRUCTURE_WALL || structure.structureType == STRUCTURE_RAMPART) {
                 return false;
             }
@@ -227,8 +232,13 @@ function findCriticalRepairTarget(creep) {
 function findWallRepairTarget(creep) {
     var room = creep.room;
     var targetHits = room.memory.wallTargetHits || 1000;
+    var blockedTargetId = room.memory.towerRepairTargetId;
     var walls = room.find(FIND_STRUCTURES, {
         filter: function(structure) {
+            if(blockedTargetId && structure.id == blockedTargetId) {
+                return false;
+            }
+
             return (structure.structureType == STRUCTURE_WALL ||
                 structure.structureType == STRUCTURE_RAMPART) &&
                 defenseUtils.shouldMaintainDefenseStructure(structure) &&
@@ -312,8 +322,13 @@ function canRepairWalls(creep) {
 
 function findMaintenanceRepairTarget(creep) {
     var room = creep.room;
+    var blockedTargetId = room.memory.towerRepairTargetId;
     var damaged = room.find(FIND_STRUCTURES, {
         filter: function(structure) {
+            if(blockedTargetId && structure.id == blockedTargetId) {
+                return false;
+            }
+
             if(!creepUtils.isSafeTarget(creep, structure)) {
                 return false;
             }
