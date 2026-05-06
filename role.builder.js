@@ -30,6 +30,10 @@ function countSitesByType(sites, structureType) {
     return count;
 }
 
+function getRoomCenter(roomName) {
+    return new RoomPosition(25, 25, roomName);
+}
+
 function getIgnoredConstructionSites(room) {
     if(!room.memory.ignoredConstructionSites) {
         room.memory.ignoredConstructionSites = {};
@@ -613,6 +617,12 @@ function moveOffHarvestPosition(creep) {
 
 var roleBuilder = {
     run: function(creep) {
+        if(creep.memory.targetRoom && creep.room.name != creep.memory.targetRoom) {
+            releaseConstructionReservation(creep);
+            creepUtils.moveTo(creep, getRoomCenter(creep.memory.targetRoom), '#ffffff', 'remote', 'move:remoteBuild');
+            return;
+        }
+
         creepUtils.updateWorkingState(creep, 'build', 'energy');
 
         var sites = creep.room.find(FIND_CONSTRUCTION_SITES);

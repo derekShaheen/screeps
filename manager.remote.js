@@ -963,6 +963,52 @@ function makeRemoteHaulerSpawnRequest(homeRoomName, remoteName) {
     };
 }
 
+function hasOwnedSpawn(room) {
+    if(!room) {
+        return false;
+    }
+
+    return room.find(FIND_MY_STRUCTURES, {
+        filter: function(structure) {
+            return structure.structureType == STRUCTURE_SPAWN;
+        }
+    }).length > 0;
+}
+
+function hasSpawnConstructionSite(room) {
+    if(!room) {
+        return false;
+    }
+
+    return room.find(FIND_CONSTRUCTION_SITES, {
+        filter: function(site) {
+            return site.structureType == STRUCTURE_SPAWN && site.my !== false;
+        }
+    }).length > 0;
+}
+
+function needsClaimBootstrap(room, remoteName) {
+    var remoteRoom = Game.rooms[remoteName];
+    if(!room || !remoteRoom || !remoteRoom.controller || !remoteRoom.controller.my) {
+        return false;
+    }
+
+    return !hasOwnedSpawn(remoteRoom) && hasSpawnConstructionSite(remoteRoom);
+}
+
+function makeBootstrapBuilderSpawnRequest(homeRoomName, remoteName) {
+    return {
+        role: 'builder',
+        bodyType: 'builder',
+        memory: {
+            role: 'builder',
+            homeRoom: homeRoomName,
+            targetRoom: remoteName,
+            working: false
+        }
+    };
+}
+
 function getRemoteEnergyAmount(remoteRoomName) {
     var remoteRoom = Game.rooms[remoteRoomName];
     if(!remoteRoom) {
@@ -1031,6 +1077,19 @@ function getRemoteSpawnDecision(room, settings) {
             }
 
             reasons.push(remote.name + ': scout already assigned');
+            continue;
+        }
+
+        if(needsClaimBootstrap(room, remote.name)) {
+            if(countRemoteCreeps(room.name, 'builder', remote.name) === 0) {
+                return {
+                    request: makeBootstrapBuilderSpawnRequest(room.name, remote.name),
+                    reasons: [],
+                    detail: remote.name + ': bootstrap builder needed for spawn site'
+                };
+            }
+
+            reasons.push(remote.name + ': bootstrap builder already assigned');
             continue;
         }
 

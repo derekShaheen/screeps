@@ -76,6 +76,75 @@ function idleAtHome(creep) {
     return true;
 }
 
+function hasOwnedSpawn(room) {
+    return room.find(FIND_MY_STRUCTURES, {
+        filter: function(structure) {
+            return structure.structureType == STRUCTURE_SPAWN;
+        }
+    }).length > 0;
+}
+
+function isBootstrapTargetRoom(creep) {
+    return creep.room.name == creep.memory.targetRoom &&
+        creep.room.controller &&
+        creep.room.controller.my &&
+        !hasOwnedSpawn(creep.room);
+}
+
+function getBootstrapWorkerPriority(creep) {
+    if(creep.memory.role == 'builder') {
+        return 1;
+    }
+
+    if(creep.memory.role == 'upgrader') {
+        return 2;
+    }
+
+    if(creep.memory.role == 'harvester') {
+        return 3;
+    }
+
+    return 99;
+}
+
+function findBootstrapWorkerTarget(creep) {
+    var candidates = creep.room.find(FIND_MY_CREEPS, {
+        filter: function(otherCreep) {
+            if(otherCreep.name == creep.name || otherCreep.spawning) {
+                return false;
+            }
+
+            if(otherCreep.store.getFreeCapacity(RESOURCE_ENERGY) <= 0) {
+                return false;
+            }
+
+            return otherCreep.memory.role == 'builder' ||
+                otherCreep.memory.role == 'upgrader' ||
+                otherCreep.memory.role == 'harvester';
+        }
+    });
+
+    if(!candidates.length) {
+        return null;
+    }
+
+    candidates.sort(function(a, b) {
+        var priorityDiff = getBootstrapWorkerPriority(a) - getBootstrapWorkerPriority(b);
+        if(priorityDiff !== 0) {
+            return priorityDiff;
+        }
+
+        var freeCapacityDiff = b.store.getFreeCapacity(RESOURCE_ENERGY) - a.store.getFreeCapacity(RESOURCE_ENERGY);
+        if(freeCapacityDiff !== 0) {
+            return freeCapacityDiff;
+        }
+
+        return creep.pos.getRangeTo(a) - creep.pos.getRangeTo(b);
+    });
+
+    return candidates[0];
+}
+
 var roleRemoteHauler = {
     run: function(creep) {
         if(remoteManager.hasThreats(creep.room)) {
@@ -93,6 +162,15 @@ var roleRemoteHauler = {
         creepUtils.updateWorkingState(creep, 'deliver', 'haul');
 
         if(creep.memory.working) {
+            if(isBootstrapTargetRoom(creep)) {
+                var bootstrapWorker = findBootstrapWorkerTarget(creep);
+                if(bootstrapWorker) {
+                    return creepUtils.transferEnergy(creep, bootstrapWorker);
+                }
+
+                return true;
+            }
+
             if(remoteManager.deliverHome(creep)) {
                 return;
             }
