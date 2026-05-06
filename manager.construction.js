@@ -2197,12 +2197,111 @@ function hasExitSeal(pos) {
     return false;
 }
 
+function hasExitRampart(pos) {
+    return hasStructure(pos, STRUCTURE_RAMPART) ||
+        hasConstructionSite(pos, STRUCTURE_RAMPART);
+}
+
+function hasExitWall(pos) {
+    return hasStructure(pos, STRUCTURE_WALL) ||
+        hasConstructionSite(pos, STRUCTURE_WALL);
+}
+
 function isNaturallySealed(room, pos) {
     return getTerrain(room, pos.x, pos.y) == TERRAIN_MASK_WALL;
 }
 
 function isExitSealComplete(room, pos) {
     return hasExitSeal(pos) || isNaturallySealed(room, pos);
+}
+
+function isExitSealPositionComplete(room, pos, structureType) {
+    if(structureType == STRUCTURE_RAMPART) {
+        return hasExitRampart(pos);
+    }
+
+    return isExitSealComplete(room, pos);
+}
+
+function isBuildableExitGateCoordinate(room, side, coordinate) {
+    var pos = getExitSealPos(room, side, coordinate);
+    return !isNaturallySealed(room, pos);
+}
+
+function getExitGateCoordinate(room, side, start, end) {
+    var preferred = getInteriorExitCoordinate(Math.floor((start + end) / 2));
+    var best = null;
+    var bestDistance = 999;
+
+    for(var coordinate = start; coordinate <= end; coordinate++) {
+        if(!isBuildableExitGateCoordinate(room, side, coordinate)) {
+            continue;
+        }
+
+        var distance = Math.abs(coordinate - preferred);
+        if(distance < bestDistance) {
+            best = coordinate;
+            bestDistance = distance;
+        }
+    }
+
+    return best;
+}
+
+function getExistingExitGateCoordinate(room, side, start, end) {
+    var best = null;
+    var bestDistance = 999;
+    var preferred = getInteriorExitCoordinate(Math.floor((start + end) / 2));
+
+    for(var coordinate = start; coordinate <= end; coordinate++) {
+        var pos = getExitSealPos(room, side, coordinate);
+        if(isNaturallySealed(room, pos) || !hasExitRampart(pos)) {
+            continue;
+        }
+
+        var distance = Math.abs(coordinate - preferred);
+        if(distance < bestDistance) {
+            best = coordinate;
+            bestDistance = distance;
+        }
+    }
+
+    return best;
+}
+
+function clearExitGateWallBlocker(room, pos) {
+    var sites = pos.lookFor(LOOK_CONSTRUCTION_SITES);
+    for(var i = 0; i < sites.length; i++) {
+        if(sites[i].structureType == STRUCTURE_WALL) {
+            var removeResult = sites[i].remove();
+            if(removeResult == OK) {
+                debug.log(
+                    'debugConstruction',
+                    room.name + ' removed wall site blocking exit gate at ' + formatPos(pos),
+                    1
+                );
+                return true;
+            }
+        }
+    }
+
+    var structures = pos.lookFor(LOOK_STRUCTURES);
+    for(var j = 0; j < structures.length; j++) {
+        if(structures[j].structureType == STRUCTURE_WALL &&
+            typeof structures[j].destroy == 'function') {
+            var destroyResult = structures[j].destroy();
+            if(destroyResult == OK) {
+                debug.log(
+                    'debugConstruction',
+                    room.name + ' removed wall blocking exit gate at ' + formatPos(pos),
+                    1
+                );
+                return true;
+            }
+        }
+    }
+
+    return false;
 }
 
 function getPosKey(pos) {
@@ -2292,10 +2391,14 @@ function getExitSealPlan(room, segment) {
     var side = getExitSide(segment[0]);
     var start = getExitCoordinate(segment[0]);
     var end = getExitCoordinate(segment[segment.length - 1]);
-    var sealed = isExitSegmentSealed(room, segment);
-    var minCoordinate = sealed ? getInteriorExitCoordinate(start) : getExitSealBoundary(room, side, start, -1);
-    var maxCoordinate = sealed ? getInteriorExitCoordinate(end) : getExitSealBoundary(room, side, end, 1);
-    var gateCoordinate = getInteriorExitCoordinate(Math.floor((start + end) / 2));
+    var traversalSealed = isExitSegmentSealed(room, segment);
+    var minCoordinate = getExitSealBoundary(room, side, start, -1);
+    var maxCoordinate = getExitSealBoundary(room, side, end, 1);
+    var existingGateCoordinate = getExistingExitGateCoordinate(room, side, minCoordinate, maxCoordinate);
+    var sealed = traversalSealed && existingGateCoordinate !== null;
+    var gateCoordinate = existingGateCoordinate !== null ?
+        existingGateCoordinate :
+        getExitGateCoordinate(room, side, minCoordinate, maxCoordinate);
     var positions = [];
 
     if(!sealed) {
@@ -2340,7 +2443,7 @@ function areExitWallsSealed(room) {
     for(var i = 0; i < segments.length; i++) {
         var plan = getExitSealPlan(room, segments[i]);
         for(var j = 0; j < plan.positions.length; j++) {
-            if(!isExitSealComplete(room, plan.positions[j].pos)) {
+            if(!isExitSealPositionComplete(room, plan.positions[j].pos, plan.positions[j].structureType)) {
                 return false;
             }
         }
@@ -2418,7 +2521,7 @@ function planExitSegment(room, segment, remaining) {
         var plannedPosition = status.planned.positions[i];
         var pos = plannedPosition.pos;
 
-        if(isExitSealComplete(room, pos)) {
+        if(isExitSealPositionComplete(room, pos, plannedPosition.structureType)) {
             continue;
         }
 
@@ -2428,6 +2531,13 @@ function planExitSegment(room, segment, remaining) {
         }
 
         var structureType = getExitSealStructureType(pos, plannedPosition.structureType);
+        if(structureType == STRUCTURE_RAMPART && hasExitWall(pos) && !hasExitRampart(pos)) {
+            if(clearExitGateWallBlocker(room, pos)) {
+                status.missing++;
+                continue;
+            }
+        }
+
         var result = createSite(room, pos, structureType);
 
         if(result == OK) {
