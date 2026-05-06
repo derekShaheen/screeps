@@ -14,7 +14,7 @@ var DEFAULT_SETTINGS = {
     priorityFlagName: 'Flag1'
 };
 
-var REMOTE_HAULERS_PER_MINER = 2;
+var REMOTE_HAULERS_PER_MINER = 1;
 
 function getSettings(room) {
     if(!room.memory.remote) {
@@ -117,6 +117,61 @@ function getApproxRange(fromPos, toPos) {
 
     return getRoomLinearDistance(fromPos.roomName, toPos.roomName) * 50 +
         Math.max(Math.abs(fromPos.x - toPos.x), Math.abs(fromPos.y - toPos.y));
+}
+
+function isUnsafeVisibleRoom(room) {
+    return !!room && (hasThreats(room) || hasHostileTower(room));
+}
+
+function shouldAvoidTravelRoom(homeRoomName, roomName, destinationRoomName) {
+    if(!roomName || roomName == destinationRoomName || roomName == homeRoomName) {
+        return false;
+    }
+
+    var visibleRoom = Game.rooms[roomName];
+    if(isUnsafeVisibleRoom(visibleRoom)) {
+        return true;
+    }
+
+    var homeRoom = Game.rooms[homeRoomName];
+    if(!homeRoom) {
+        return false;
+    }
+
+    var settings = getSettings(homeRoom);
+    var remoteMemory = settings.rooms && settings.rooms[roomName] ? settings.rooms[roomName] : null;
+    return !!remoteMemory &&
+        ((remoteMemory.unsafeUntil && remoteMemory.unsafeUntil > Game.time) ||
+        remoteMemory.status == 'unsafe' ||
+        (remoteMemory.status == 'unknown' &&
+            (remoteMemory.reason == 'combat hostile' || remoteMemory.reason == 'hostile tower')));
+}
+
+function getRemoteTravelOptions(homeRoomName, destinationRoomName) {
+    return {
+        routeCallback: function(roomName) {
+            if(shouldAvoidTravelRoom(homeRoomName, roomName, destinationRoomName)) {
+                return Infinity;
+            }
+
+            return 1;
+        }
+    };
+}
+
+function moveToRoom(creep, roomName, stroke, intentMessage, intentKey) {
+    if(!creep || !roomName) {
+        return false;
+    }
+
+    return creepUtils.moveTo(
+        creep,
+        new RoomPosition(25, 25, roomName),
+        stroke,
+        intentMessage,
+        intentKey,
+        getRemoteTravelOptions(creep.memory.homeRoom || creep.room.name, roomName)
+    );
 }
 
 function getClosestByApproxRange(fromPos, targets) {
@@ -376,6 +431,9 @@ function updateVisibleRemoteRoom(homeRoom, remoteName, remoteMemory) {
         if(remoteMemory.lastScouted &&
             Game.time - remoteMemory.lastScouted > getSettings(homeRoom).staleRoomTicks) {
             remoteMemory.status = 'unknown';
+            if(remoteMemory.unsafeAttempts > 0) {
+                remoteMemory.unsafeAttempts = remoteMemory.unsafeAttempts - 1;
+            }
         }
         return;
     }
@@ -408,9 +466,15 @@ function updateVisibleRemoteRoom(homeRoom, remoteName, remoteMemory) {
     }
 
     if(hasThreats(remoteRoom) || hasHostileTower(remoteRoom)) {
+        var settings = getSettings(homeRoom);
+        var reason = hasHostileTower(remoteRoom) ? 'hostile tower' : 'combat hostile';
+        if(remoteMemory.status != 'unsafe' || !remoteMemory.unsafeUntil || Game.time >= remoteMemory.unsafeUntil) {
+            var attempts = (remoteMemory.unsafeAttempts || 0) + 1;
+            remoteMemory.unsafeAttempts = attempts;
+            remoteMemory.unsafeUntil = Game.time + settings.unsafeRoomCooldown * Math.min(attempts, 10);
+        }
         remoteMemory.status = 'unsafe';
-        remoteMemory.unsafeUntil = Game.time + getSettings(homeRoom).unsafeRoomCooldown;
-        remoteMemory.reason = hasHostileTower(remoteRoom) ? 'hostile tower' : 'combat hostile';
+        remoteMemory.reason = reason;
         return;
     }
 
@@ -423,6 +487,7 @@ function updateVisibleRemoteRoom(homeRoom, remoteName, remoteMemory) {
 
     remoteMemory.status = 'ready';
     delete remoteMemory.reason;
+    delete remoteMemory.unsafeAttempts;
     remoteMemory.sourceIds = sources.map(function(source) {
         return source.id;
     });
@@ -450,6 +515,34 @@ function updateRemoteMemory(room) {
     return settings;
 }
 
+function canScoutRoom(room, remoteName, remoteMemory, settings) {
+    if(!isAccessibleRemoteMapRoom(room.name, remoteName)) {
+        return false;
+    }
+
+    if(remoteMemory.exitAccessible === false) {
+        return false;
+    }
+
+    if(remoteMemory.enabled === false) {
+        return false;
+    }
+
+    if(remoteMemory.distance && remoteMemory.distance > settings.maxRooms) {
+        return false;
+    }
+
+    if(remoteMemory.unsafeUntil && Game.time < remoteMemory.unsafeUntil) {
+        return false;
+    }
+
+    if(isPersistentRemoteBlockReason(remoteMemory.reason)) {
+        return false;
+    }
+
+    return remoteMemory.status == 'ready' || remoteMemory.status == 'unknown';
+}
+
 function canUseRemote(room, remoteName, remoteMemory, settings) {
     if(!isAccessibleRemoteMapRoom(room.name, remoteName)) {
         return false;
@@ -472,6 +565,10 @@ function canUseRemote(room, remoteName, remoteMemory, settings) {
     }
 
     if(isPersistentRemoteBlockReason(remoteMemory.reason)) {
+        return false;
+    }
+
+    if(remoteMemory.status == 'unknown' && remoteMemory.unsafeAttempts > 0) {
         return false;
     }
 
@@ -732,7 +829,7 @@ function needsRemoteReservation(room, remoteName, remoteMemory, settings) {
 }
 
 function needsRemoteScout(room, remoteName, remoteMemory, settings) {
-    if(!remoteMemory || !canUseRemote(room, remoteName, remoteMemory, settings)) {
+    if(!remoteMemory || !canScoutRoom(room, remoteName, remoteMemory, settings)) {
         return false;
     }
 
@@ -867,11 +964,20 @@ function getScoutTarget(homeRoomName, currentTargetRoom) {
         return currentTargetRoom;
     }
 
-    var rooms = getActiveRemoteRooms(homeRoom);
-    for(var i = 0; i < rooms.length; i++) {
-        if(needsRemoteScout(homeRoom, rooms[i].name, rooms[i].memory, settings) &&
-            countRemoteCreeps(homeRoomName, 'scout', rooms[i].name) === 0) {
-            return rooms[i].name;
+    var allRooms = [];
+    for(var remoteName in settings.rooms) {
+        allRooms.push({ name: remoteName, memory: settings.rooms[remoteName] });
+    }
+
+    allRooms.sort(function(a, b) {
+        return (a.memory.distance || 1) - (b.memory.distance || 1) ||
+            a.name.localeCompare(b.name);
+    });
+
+    for(var i = 0; i < allRooms.length; i++) {
+        if(needsRemoteScout(homeRoom, allRooms[i].name, allRooms[i].memory, settings) &&
+            countRemoteCreeps(homeRoomName, 'scout', allRooms[i].name) === 0) {
+            return allRooms[i].name;
         }
     }
 
@@ -1049,6 +1155,19 @@ function getRemoteSpawnDecision(room, settings) {
             request: null,
             reasons: homeBlockers
         };
+    }
+
+    for(var scoutRoomName in settings.rooms) {
+        var scoutMem = settings.rooms[scoutRoomName];
+        if(!canUseRemote(room, scoutRoomName, scoutMem, settings) &&
+            needsRemoteScout(room, scoutRoomName, scoutMem, settings) &&
+            countRemoteCreeps(room.name, 'scout', scoutRoomName) === 0) {
+            return {
+                request: makeScoutSpawnRequest(room.name, scoutRoomName),
+                reasons: [],
+                detail: scoutRoomName + ': scout re-verification needed after hostile'
+            };
+        }
     }
 
     var rooms = getActiveRemoteRooms(room);
@@ -1345,23 +1464,29 @@ function markUnsafe(homeRoomName, targetRoomName, reason) {
         settings.rooms[targetRoomName] = {};
     }
 
-    settings.rooms[targetRoomName].status = 'unsafe';
-    settings.rooms[targetRoomName].reason = reason || 'hostile threat';
-    settings.rooms[targetRoomName].unsafeUntil = Game.time + settings.unsafeRoomCooldown;
+    var mem = settings.rooms[targetRoomName];
+    var attempts = (mem.unsafeAttempts || 0) + 1;
+    mem.status = 'unsafe';
+    mem.reason = reason || 'hostile threat';
+    mem.unsafeAttempts = attempts;
+    mem.unsafeUntil = Game.time + settings.unsafeRoomCooldown * Math.min(attempts, 10);
 }
 
 function moveHome(creep, intent) {
+    var homeFallback = getHomeFallback(creep);
+    var homePos = homeFallback.pos || homeFallback;
     creepUtils.moveTo(
         creep,
-        getHomeFallback(creep),
+        homeFallback,
         '#ff66cc',
         intent || 'home',
-        'move:' + (intent || 'remoteHome')
+        'move:' + (intent || 'remoteHome'),
+        getRemoteTravelOptions(creep.memory.homeRoom || creep.room.name, homePos.roomName)
     );
     return true;
 }
 
-function findRemoteEnergyTarget(creep, homeRoomName) {
+function findRemoteEnergyTarget(creep, homeRoomName, preferredRoomName) {
     var homeRoom = Game.rooms[homeRoomName || creep.memory.homeRoom || creep.room.name];
     if(!homeRoom) {
         return null;
@@ -1373,6 +1498,11 @@ function findRemoteEnergyTarget(creep, homeRoomName) {
     }
 
     var rooms = getActiveRemoteRooms(homeRoom);
+    if(preferredRoomName) {
+        rooms = rooms.filter(function(remote) {
+            return remote.name == preferredRoomName;
+        });
+    }
     var best = null;
     var bestScore = 999999;
 
@@ -1487,6 +1617,7 @@ module.exports = {
     isRemoteUsable: isRemoteUsable,
     canHarvestRemoteRoom: canHarvestRemoteRoom,
     markUnsafe: markUnsafe,
+    moveToRoom: moveToRoom,
     moveHome: moveHome,
     run: run,
     withdrawOrPickup: withdrawOrPickup

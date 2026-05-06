@@ -25,25 +25,9 @@ function getHomeFallback(creep) {
     return spawns[0] || homeRoom.controller || getRoomCenter(homeRoom.name);
 }
 
-function rememberUnsafe(creep, reason) {
-    var homeRoom = Game.rooms[creep.memory.homeRoom];
-    if(!homeRoom) {
-        return;
-    }
-
-    var settings = remoteManager.getSettings(homeRoom);
-    if(!settings.rooms[creep.memory.targetRoom]) {
-        settings.rooms[creep.memory.targetRoom] = {};
-    }
-
-    settings.rooms[creep.memory.targetRoom].status = 'unsafe';
-    settings.rooms[creep.memory.targetRoom].reason = reason;
-    settings.rooms[creep.memory.targetRoom].unsafeUntil = Game.time + settings.unsafeRoomCooldown;
-}
-
 function retreatHome(creep, reason) {
     if(creep.room.name == creep.memory.targetRoom) {
-        rememberUnsafe(creep, reason);
+        remoteManager.markUnsafe(creep.memory.homeRoom, creep.memory.targetRoom, reason || 'hostile threat');
     }
     creepUtils.announceIntent(creep, 'action:remoteRetreat', 'retreat');
     creepUtils.moveTo(creep, getHomeFallback(creep), '#ff66cc', 'home', 'move:remoteRetreat');
@@ -118,13 +102,7 @@ function deliverIfReturningHome(creep) {
 }
 
 function moveToTargetRoom(creep) {
-    creepUtils.moveTo(
-        creep,
-        getRoomCenter(creep.memory.targetRoom),
-        '#ffaa00',
-        'remote',
-        'move:remoteRoom'
-    );
+    remoteManager.moveToRoom(creep, creep.memory.targetRoom, '#ffaa00', 'remote', 'move:remoteRoom');
     return true;
 }
 
@@ -277,17 +255,12 @@ function buildContainerSite(creep, source, site) {
         return false;
     }
 
-    if(!creep.pos.isEqualTo(site.pos) && site.pos.lookFor(LOOK_CREEPS).length === 0) {
-        creepUtils.moveTo(creep, site, '#ffaa00', 'build box', 'move:remoteBox');
+    if(!creep.pos.inRangeTo(source, 1)) {
+        creepUtils.moveTo(creep, source, '#ffaa00', 'build box', 'move:remoteBox');
         return true;
     }
 
     if(creep.store[RESOURCE_ENERGY] === 0) {
-        if(!creep.pos.inRangeTo(source, 1)) {
-            creepUtils.moveTo(creep, source, '#ffaa00', 'go mine', 'move:remoteMine');
-            return true;
-        }
-
         var harvestResult = creep.harvest(source);
         if(harvestResult == OK) {
             creepUtils.announceIntent(creep, 'action:remoteHarvest', 'mine');
@@ -313,7 +286,7 @@ function buildContainerSite(creep, source, site) {
     }
 
     if(buildResult == ERR_NOT_IN_RANGE) {
-        creepUtils.moveTo(creep, site, '#ffaa00', 'build box', 'move:remoteBox');
+        creepUtils.moveTo(creep, source, '#ffaa00', 'build box', 'move:remoteBox');
         return true;
     }
 

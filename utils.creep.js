@@ -259,7 +259,7 @@ function findStepAsidePosition(creep, target) {
     return candidates[0];
 }
 
-function moveTo(creep, target, stroke, intentMessage, intentKey) {
+function moveTo(creep, target, stroke, intentMessage, intentKey, extraOptions) {
     if(creep.memory.passThroughMovedTick == Game.time) {
         return OK;
     }
@@ -271,6 +271,12 @@ function moveTo(creep, target, stroke, intentMessage, intentKey) {
         ignoreCreeps: true,
         reusePath: 5
     };
+
+    if(extraOptions) {
+        for(var optionKey in extraOptions) {
+            options[optionKey] = extraOptions[optionKey];
+        }
+    }
 
     if(tryPassThrough(creep, target, stuckTicks)) {
         return OK;

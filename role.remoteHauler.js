@@ -20,25 +20,9 @@ function getHomeFallback(creep) {
     return spawns[0] || homeRoom.controller || getRoomCenter(homeRoom.name);
 }
 
-function rememberUnsafe(creep) {
-    var homeRoom = Game.rooms[creep.memory.homeRoom];
-    if(!homeRoom) {
-        return;
-    }
-
-    var settings = remoteManager.getSettings(homeRoom);
-    if(!settings.rooms[creep.memory.targetRoom]) {
-        settings.rooms[creep.memory.targetRoom] = {};
-    }
-
-    settings.rooms[creep.memory.targetRoom].status = 'unsafe';
-    settings.rooms[creep.memory.targetRoom].reason = 'hostile threat';
-    settings.rooms[creep.memory.targetRoom].unsafeUntil = Game.time + settings.unsafeRoomCooldown;
-}
-
 function retreatHome(creep) {
     if(creep.room.name == creep.memory.targetRoom) {
-        rememberUnsafe(creep);
+        remoteManager.markUnsafe(creep.memory.homeRoom, creep.memory.targetRoom, 'hostile threat');
     }
     creepUtils.announceIntent(creep, 'action:remoteRetreat', 'retreat');
     creepUtils.moveTo(creep, getHomeFallback(creep), '#ff66cc', 'home', 'move:remoteRetreat');
@@ -52,13 +36,7 @@ function abortBlockedRemote(creep) {
 }
 
 function moveToRemoteRoom(creep) {
-    creepUtils.moveTo(
-        creep,
-        getRoomCenter(creep.memory.targetRoom),
-        '#ffaa00',
-        'remote',
-        'move:remoteHaulRoom'
-    );
+    remoteManager.moveToRoom(creep, creep.memory.targetRoom, '#ffaa00', 'remote', 'move:remoteHaulRoom');
     return true;
 }
 
@@ -178,7 +156,7 @@ var roleRemoteHauler = {
             return idleAtHome(creep);
         }
 
-        var target = remoteManager.findRemoteEnergyTarget(creep, creep.memory.homeRoom);
+        var target = remoteManager.findRemoteEnergyTarget(creep, creep.memory.homeRoom, creep.memory.targetRoom);
         if(target) {
             return remoteManager.withdrawOrPickup(creep, target);
         }

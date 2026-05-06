@@ -301,7 +301,9 @@ module.exports.loop = function () {
     cleanupInvalidRoomMemory();
 
     for(var roomName in Game.rooms) {
-        initializeRoomMemory(Game.rooms[roomName]);
+        if(Game.rooms[roomName].controller && Game.rooms[roomName].controller.my) {
+            initializeRoomMemory(Game.rooms[roomName]);
+        }
     }
 
     for(var towerRoomName in Game.rooms) {

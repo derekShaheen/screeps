@@ -21,24 +21,12 @@ function getHomeFallback(creep) {
 }
 
 function moveToTargetRoom(creep) {
-    creepUtils.moveTo(
-        creep,
-        getRoomCenter(creep.memory.targetRoom),
-        '#66ffcc',
-        'reserve',
-        'move:reserveRoom'
-    );
+    remoteManager.moveToRoom(creep, creep.memory.targetRoom, '#66ffcc', 'reserve', 'move:reserveRoom');
     return true;
 }
 
 function moveHome(creep) {
-    creepUtils.moveTo(
-        creep,
-        getHomeFallback(creep),
-        '#66ffcc',
-        'home',
-        'move:reserveHome'
-    );
+    remoteManager.moveHome(creep, 'reserveHome');
     return true;
 }
 
