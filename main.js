@@ -29,6 +29,10 @@ var DEFAULT_ROOM_MEMORY = {
         mineralHarvester: 0,
         defender: 0
     },
+    spawnBudget: {
+        threshold: 2000,
+        ratio: 0.75
+    },
     wallTargetHits: 1000,
     defenseMode: false,
     construction: {
@@ -160,6 +164,16 @@ function initializeRoomMemory(room) {
 
     if(memory.wallTargetHits === undefined) {
         memory.wallTargetHits = DEFAULT_ROOM_MEMORY.wallTargetHits;
+    }
+
+    if(!memory.spawnBudget) {
+        memory.spawnBudget = {};
+    }
+
+    for(var spawnBudgetKey in DEFAULT_ROOM_MEMORY.spawnBudget) {
+        if(memory.spawnBudget[spawnBudgetKey] === undefined) {
+            memory.spawnBudget[spawnBudgetKey] = DEFAULT_ROOM_MEMORY.spawnBudget[spawnBudgetKey];
+        }
     }
 
     if(memory.defenseMode === undefined) {

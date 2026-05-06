@@ -95,8 +95,8 @@ var BODIES = {
 
 var MIN_DEFENDER_HEALER_BODY = [TOUGH, HEAL, MOVE];
 var MAX_CREEP_PARTS = 50;
-var STANDARD_SPAWN_BUDGET_THRESHOLD = 2000;
-var STANDARD_SPAWN_BUDGET_RATIO = 0.75;
+var DEFAULT_STANDARD_SPAWN_BUDGET_THRESHOLD = 2000;
+var DEFAULT_STANDARD_SPAWN_BUDGET_RATIO = 0.75;
 
 var LOW_STAFF_BODY_BUDGET = {
     claimer: 650,
@@ -276,12 +276,27 @@ function getLowStaffBodyBudget(room, role, bodyType) {
     return Math.min(room.energyAvailable, room.energyCapacityAvailable, configuredBudget);
 }
 
+function getRoomSpawnBudgetSettings(room) {
+    var roomMemory = room && room.memory ? room.memory : {};
+    var spawnBudget = roomMemory.spawnBudget || {};
+
+    return {
+        threshold: typeof spawnBudget.threshold == 'number' ?
+            spawnBudget.threshold :
+            DEFAULT_STANDARD_SPAWN_BUDGET_THRESHOLD,
+        ratio: typeof spawnBudget.ratio == 'number' ?
+            spawnBudget.ratio :
+            DEFAULT_STANDARD_SPAWN_BUDGET_RATIO
+    };
+}
+
 function getStandardBodyBudget(room, role) {
-    if(role == 'claimer' || room.energyCapacityAvailable < STANDARD_SPAWN_BUDGET_THRESHOLD) {
+    var spawnBudget = getRoomSpawnBudgetSettings(room);
+    if(role == 'claimer' || room.energyCapacityAvailable < spawnBudget.threshold) {
         return room.energyCapacityAvailable;
     }
 
-    return Math.max(300, Math.floor(room.energyCapacityAvailable * STANDARD_SPAWN_BUDGET_RATIO));
+    return Math.max(300, Math.floor(room.energyCapacityAvailable * spawnBudget.ratio));
 }
 
 function getSpawnBodyDecision(room, role, bodyType, counts, targets) {
