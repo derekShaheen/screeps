@@ -14,6 +14,11 @@ var BASE_TARGETS = {
 var ROLE_PRIORITY = ['harvester', 'transporter', 'upgrader', 'builder', 'defender', 'mineralHarvester'];
 
 var BODIES = {
+    claimer: [
+        [CLAIM, MOVE],
+        [CLAIM, MOVE, MOVE],
+        [CLAIM, MOVE, MOVE, MOVE]
+    ],
     scout: [
         [MOVE],
         [MOVE, MOVE],
@@ -92,6 +97,7 @@ var MIN_DEFENDER_HEALER_BODY = [TOUGH, HEAL, MOVE];
 var MAX_CREEP_PARTS = 50;
 
 var LOW_STAFF_BODY_BUDGET = {
+    claimer: 650,
     scout: 150,
     reserver: 650,
     harvester: 750,
@@ -107,6 +113,7 @@ var LOW_STAFF_BODY_BUDGET = {
 };
 
 var BODY_GROWTH = {
+    claimer: [MOVE],
     scout: [MOVE],
     reserver: [CLAIM, MOVE],
     harvester: [WORK, CARRY, MOVE],

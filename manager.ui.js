@@ -183,6 +183,7 @@ function siteIs(site, structureType) {
 
 function getRemoteWorkerCounts(room) {
     var counts = {
+        claimer: 0,
         scout: 0,
         reserver: 0,
         remoteMiner: 0,
@@ -227,7 +228,8 @@ var uiManager = {
                 ' | U ' + counts.upgrader + '/' + targets.upgrader +
                 ' | M ' + counts.mineralHarvester + '/' + targets.mineralHarvester +
                 ' | D ' + counts.defender + '/' + targets.defender,
-            'Remote: Sc ' + remoteCounts.scout +
+            'Remote: Cl ' + remoteCounts.claimer +
+                ' | Sc ' + remoteCounts.scout +
                 ' | Re ' + remoteCounts.reserver +
                 ' | RM ' + remoteCounts.remoteMiner +
                 ' | RH ' + remoteCounts.remoteHauler,

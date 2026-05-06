@@ -5,6 +5,7 @@ var DEFAULT_SETTINGS = {
     enabled: true,
     maxRooms: 2,
     minHomeRcl: 3,
+    claimMinHomeRcl: 6,
     minHaulEnergy: 300,
     reserveRenewBelow: 1200,
     staleRoomTicks: 1500,
@@ -766,6 +767,93 @@ function makeReserverSpawnRequest(homeRoomName, remoteName) {
     };
 }
 
+function canClaimNewRoom() {
+    if(!Game.gcl || typeof Game.gcl.level != 'number') {
+        return false;
+    }
+
+    var ownedRooms = 0;
+    for(var roomName in Game.rooms) {
+        var room = Game.rooms[roomName];
+        if(room.controller && room.controller.my) {
+            ownedRooms++;
+        }
+    }
+
+    return ownedRooms < Game.gcl.level;
+}
+
+function needsRemoteClaim(room, remoteName, remoteMemory, settings) {
+    if(!room || !room.controller || room.controller.level < settings.claimMinHomeRcl) {
+        return false;
+    }
+
+    if(!canClaimNewRoom()) {
+        return false;
+    }
+
+    if(!remoteMemory || !canUseRemote(room, remoteName, remoteMemory, settings)) {
+        return false;
+    }
+
+    if(remoteMemory.status != 'ready' || !remoteMemory.sourceIds || !remoteMemory.sourceIds.length) {
+        return false;
+    }
+
+    var remoteRoom = Game.rooms[remoteName];
+    if(!remoteRoom || !remoteRoom.controller) {
+        return false;
+    }
+
+    if(remoteRoom.controller.my || remoteRoom.controller.owner) {
+        return false;
+    }
+
+    if(remoteRoom.controller.reservation &&
+        remoteRoom.controller.reservation.username != getMyUsername()) {
+        return false;
+    }
+
+    return true;
+}
+
+function makeClaimerSpawnRequest(homeRoomName, remoteName) {
+    return {
+        role: 'claimer',
+        bodyType: 'claimer',
+        memory: {
+            role: 'claimer',
+            homeRoom: homeRoomName,
+            targetRoom: remoteName,
+            working: false
+        }
+    };
+}
+
+function getClaimerTarget(homeRoomName, currentTargetRoom) {
+    var homeRoom = Game.rooms[homeRoomName];
+    if(!homeRoom) {
+        return null;
+    }
+
+    var settings = updateRemoteMemory(homeRoom);
+    if(currentTargetRoom &&
+        settings.rooms[currentTargetRoom] &&
+        needsRemoteClaim(homeRoom, currentTargetRoom, settings.rooms[currentTargetRoom], settings)) {
+        return currentTargetRoom;
+    }
+
+    var rooms = getActiveRemoteRooms(homeRoom);
+    for(var i = 0; i < rooms.length; i++) {
+        if(needsRemoteClaim(homeRoom, rooms[i].name, rooms[i].memory, settings) &&
+            countRemoteCreeps(homeRoomName, 'claimer', rooms[i].name) === 0) {
+            return rooms[i].name;
+        }
+    }
+
+    return null;
+}
+
 function getScoutTarget(homeRoomName, currentTargetRoom) {
     var homeRoom = Game.rooms[homeRoomName];
     if(!homeRoom) {
@@ -970,6 +1058,18 @@ function getRemoteSpawnDecision(room, settings) {
             }
 
             roomReasons.push('reserver already assigned');
+        }
+
+        if(needsRemoteClaim(room, remote.name, remote.memory, settings)) {
+            if(countRemoteCreeps(room.name, 'claimer', remote.name) === 0) {
+                return {
+                    request: makeClaimerSpawnRequest(room.name, remote.name),
+                    reasons: [],
+                    detail: remote.name + ': claim slot available at GCL ' + Game.gcl.level
+                };
+            }
+
+            roomReasons.push('claimer already assigned');
         }
 
         var readyMinerSources = countReadyRemoteMinerSources(sourceIds);
@@ -1317,6 +1417,7 @@ function run(room) {
 module.exports = {
     deliverHome: deliverHome,
     findRemoteEnergyTarget: findRemoteEnergyTarget,
+    getClaimerTarget: getClaimerTarget,
     getReserverTarget: getReserverTarget,
     getScoutTarget: getScoutTarget,
     getSettings: getSettings,

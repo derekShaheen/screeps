@@ -12,6 +12,7 @@ var roleHarvester = require('role.harvester');
 var roleBuilder = require('role.builder');
 var roleDefender = require('role.defender');
 var roleMineralHarvester = require('role.mineralHarvester');
+var roleClaimer = require('role.claimer');
 var roleRemoteHauler = require('role.remoteHauler');
 var roleRemoteMiner = require('role.remoteMiner');
 var roleReserver = require('role.reserver');
@@ -65,6 +66,7 @@ var DEFAULT_ROOM_MEMORY = {
         enabled: true,
         maxRooms: 2,
         minHomeRcl: 3,
+        claimMinHomeRcl: 6,
         minHaulEnergy: 300,
         staleRoomTicks: 1500,
         unsafeRoomCooldown: 500
@@ -201,6 +203,7 @@ function runCreep(creep) {
     }
 
     var isRemoteRole = creep.memory.role == 'remoteMiner' ||
+        creep.memory.role == 'claimer' ||
         creep.memory.role == 'reserver' ||
         creep.memory.role == 'scout' ||
         creep.memory.role == 'remoteHauler' ||
@@ -241,6 +244,11 @@ function runCreep(creep) {
 
     if(creep.memory.role == 'remoteMiner') {
         roleRemoteMiner.run(creep);
+        return;
+    }
+
+    if(creep.memory.role == 'claimer') {
+        roleClaimer.run(creep);
         return;
     }
 
