@@ -106,6 +106,10 @@ function getOwnedRoomNames() {
     return ownedRooms;
 }
 
+function isOwnedRoom(room) {
+    return !!(room && room.controller && room.controller.my);
+}
+
 function cleanupInvalidRoomMemory() {
     if(!Memory.rooms) {
         Memory.rooms = {};
@@ -301,35 +305,45 @@ module.exports.loop = function () {
     cleanupInvalidRoomMemory();
 
     for(var roomName in Game.rooms) {
-        if(Game.rooms[roomName].controller && Game.rooms[roomName].controller.my) {
+        if(isOwnedRoom(Game.rooms[roomName])) {
             initializeRoomMemory(Game.rooms[roomName]);
         }
     }
 
     for(var towerRoomName in Game.rooms) {
-        towerManager.run(Game.rooms[towerRoomName]);
+        if(isOwnedRoom(Game.rooms[towerRoomName])) {
+            towerManager.run(Game.rooms[towerRoomName]);
+        }
     }
 
     for(var linkRoomName in Game.rooms) {
-        linkManager.run(Game.rooms[linkRoomName]);
+        if(isOwnedRoom(Game.rooms[linkRoomName])) {
+            linkManager.run(Game.rooms[linkRoomName]);
+        }
     }
 
     for(var labRoomName in Game.rooms) {
-        labManager.run(Game.rooms[labRoomName]);
+        if(isOwnedRoom(Game.rooms[labRoomName])) {
+            labManager.run(Game.rooms[labRoomName]);
+        }
     }
 
     for(var marketRoomName in Game.rooms) {
-        marketManager.run(Game.rooms[marketRoomName]);
+        if(isOwnedRoom(Game.rooms[marketRoomName])) {
+            marketManager.run(Game.rooms[marketRoomName]);
+        }
     }
 
     for(var remoteRoomName in Game.rooms) {
-        if(Game.rooms[remoteRoomName].controller && Game.rooms[remoteRoomName].controller.my) {
+        if(isOwnedRoom(Game.rooms[remoteRoomName])) {
             remoteManager.run(Game.rooms[remoteRoomName]);
         }
     }
 
     for(var constructionRoomName in Game.rooms) {
-        constructionManager.run(Game.rooms[constructionRoomName]);
+        if(isOwnedRoom(Game.rooms[constructionRoomName])) {
+            constructionManager.run(Game.rooms[constructionRoomName]);
+        }
     }
 
     for(var spawnName in Game.spawns) {
@@ -341,6 +355,8 @@ module.exports.loop = function () {
     }
 
     for(var uiRoomName in Game.rooms) {
-        uiManager.run(Game.rooms[uiRoomName]);
+        if(isOwnedRoom(Game.rooms[uiRoomName])) {
+            uiManager.run(Game.rooms[uiRoomName]);
+        }
     }
 };
