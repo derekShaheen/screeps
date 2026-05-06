@@ -590,6 +590,21 @@ function isRemoteUsable(homeRoomName, targetRoomName) {
     return canUseRemote(homeRoom, targetRoomName, remoteMemory, settings);
 }
 
+function isRemoteScoutable(homeRoomName, targetRoomName) {
+    var homeRoom = Game.rooms[homeRoomName];
+    if(!homeRoom || !targetRoomName) {
+        return false;
+    }
+
+    var settings = updateRemoteMemory(homeRoom);
+    var remoteMemory = settings.rooms[targetRoomName];
+    if(!remoteMemory) {
+        return false;
+    }
+
+    return canScoutRoom(homeRoom, targetRoomName, remoteMemory, settings);
+}
+
 function getHomeExplorationBlockers(room, memory, settings) {
     var blockers = [];
 
@@ -1614,6 +1629,7 @@ module.exports = {
     getSpawnRequest: getSpawnRequest,
     hasHostileTower: hasHostileTower,
     hasThreats: hasThreats,
+    isRemoteScoutable: isRemoteScoutable,
     isRemoteUsable: isRemoteUsable,
     canHarvestRemoteRoom: canHarvestRemoteRoom,
     markUnsafe: markUnsafe,

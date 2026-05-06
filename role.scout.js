@@ -115,7 +115,7 @@ var roleScout = {
             return retreatHome(creep, 'hostile tower');
         }
 
-        if(!remoteManager.isRemoteUsable(creep.memory.homeRoom, creep.memory.targetRoom)) {
+        if(!remoteManager.isRemoteScoutable(creep.memory.homeRoom, creep.memory.targetRoom)) {
             rememberScoutCooldown(creep);
             delete creep.memory.targetRoom;
             creepUtils.announceIntent(creep, 'action:idle', 'idle');
