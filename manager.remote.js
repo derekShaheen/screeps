@@ -9,12 +9,13 @@ var DEFAULT_SETTINGS = {
     minHaulEnergy: 300,
     reserveRenewBelow: 1200,
     staleRoomTicks: 1500,
-    unsafeRoomCooldown: 500,
+    unsafeRoomCooldown: 5000,
     exitAccessCacheTicks: 100,
     priorityFlagName: 'Flag1'
 };
 
 var REMOTE_HAULERS_PER_MINER = 1;
+var MIN_UNSAFE_ROOM_COOLDOWN = 5000;
 
 function getSettings(room) {
     if(!room.memory.remote) {
@@ -40,6 +41,60 @@ function getMyUsername() {
     }
 
     return null;
+}
+
+function getOwnedRooms() {
+    var rooms = [];
+    for(var roomName in Game.rooms) {
+        var room = Game.rooms[roomName];
+        if(room.controller && room.controller.my) {
+            rooms.push(room);
+        }
+    }
+
+    return rooms;
+}
+
+function getUnsafeRoomMemory() {
+    if(!Memory.remote) {
+        Memory.remote = {};
+    }
+
+    if(!Memory.remote.unsafeRooms) {
+        Memory.remote.unsafeRooms = {};
+    }
+
+    return Memory.remote.unsafeRooms;
+}
+
+function getUnsafeRoomRecord(roomName) {
+    var unsafeRooms = getUnsafeRoomMemory();
+    var record = unsafeRooms[roomName];
+    if(record && record.unsafeUntil && record.unsafeUntil <= Game.time) {
+        delete unsafeRooms[roomName];
+        return null;
+    }
+
+    return record || null;
+}
+
+function isGloballyUnsafeRoom(roomName) {
+    return !!getUnsafeRoomRecord(roomName);
+}
+
+function clearGlobalUnsafeRoom(roomName) {
+    var unsafeRooms = getUnsafeRoomMemory();
+    if(unsafeRooms[roomName]) {
+        delete unsafeRooms[roomName];
+    }
+}
+
+function getUnsafeCooldown(settings) {
+    var cooldown = settings && typeof settings.unsafeRoomCooldown == 'number' ?
+        settings.unsafeRoomCooldown :
+        DEFAULT_SETTINGS.unsafeRoomCooldown;
+
+    return Math.max(MIN_UNSAFE_ROOM_COOLDOWN, cooldown);
 }
 
 function isThreateningHostile(creep) {
@@ -87,6 +142,24 @@ function canHarvestRemoteRoom(room) {
         !hasHostileTower(room);
 }
 
+function rememberUnsafeRemote(settings, remoteMemory, remoteName, reason) {
+    var attempts = (remoteMemory.unsafeAttempts || 0) + 1;
+    var cooldown = getUnsafeCooldown(settings);
+    var unsafeUntil = Game.time + cooldown * Math.min(attempts, 10);
+
+    remoteMemory.status = 'unsafe';
+    remoteMemory.reason = reason || 'hostile threat';
+    remoteMemory.unsafeAttempts = attempts;
+    remoteMemory.unsafeUntil = unsafeUntil;
+
+    getUnsafeRoomMemory()[remoteName] = {
+        reason: remoteMemory.reason,
+        unsafeUntil: unsafeUntil,
+        attempts: attempts,
+        lastSeen: Game.time
+    };
+}
+
 function isPersistentRemoteBlockReason(reason) {
     if(!reason) {
         return false;
@@ -126,6 +199,10 @@ function isUnsafeVisibleRoom(room) {
 function shouldAvoidTravelRoom(homeRoomName, roomName, destinationRoomName) {
     if(!roomName || roomName == destinationRoomName || roomName == homeRoomName) {
         return false;
+    }
+
+    if(isGloballyUnsafeRoom(roomName)) {
+        return true;
     }
 
     var visibleRoom = Game.rooms[roomName];
@@ -371,26 +448,39 @@ function hasAccessibleExit(room, direction, remoteMemory, settings) {
     return accessible;
 }
 
-function rememberAdjacentRooms(room, settings) {
+function rememberAdjacentRooms(room, settings, homeRoomName) {
     if(typeof Game.map.describeExits != 'function') {
         return;
     }
 
+    homeRoomName = homeRoomName || room.name;
     var exits = Game.map.describeExits(room.name) || {};
     for(var direction in exits) {
         var roomName = exits[direction];
+        if(roomName == homeRoomName) {
+            continue;
+        }
+
         var mapStatus = getMapRoomStatus(roomName);
+        var distance = getRoomLinearDistance(homeRoomName, roomName);
         if(!settings.rooms[roomName]) {
             settings.rooms[roomName] = {
                 enabled: true,
                 status: 'unknown',
-                distance: getRoomLinearDistance(room.name, roomName)
+                distance: distance,
+                parentRoom: room.name
             };
+        }
+
+        if(settings.rooms[roomName].distance === undefined ||
+            distance < settings.rooms[roomName].distance) {
+            settings.rooms[roomName].distance = distance;
+            settings.rooms[roomName].parentRoom = room.name;
         }
 
         settings.rooms[roomName].exit = direction;
         settings.rooms[roomName].mapStatus = mapStatus;
-        if(!isAccessibleRemoteMapRoom(room.name, roomName)) {
+        if(!isAccessibleRemoteMapRoom(homeRoomName, roomName)) {
             settings.rooms[roomName].status = 'blocked';
             settings.rooms[roomName].reason = 'map status ' + mapStatus;
             continue;
@@ -468,15 +558,17 @@ function updateVisibleRemoteRoom(homeRoom, remoteName, remoteMemory) {
     if(hasThreats(remoteRoom) || hasHostileTower(remoteRoom)) {
         var settings = getSettings(homeRoom);
         var reason = hasHostileTower(remoteRoom) ? 'hostile tower' : 'combat hostile';
-        if(remoteMemory.status != 'unsafe' || !remoteMemory.unsafeUntil || Game.time >= remoteMemory.unsafeUntil) {
-            var attempts = (remoteMemory.unsafeAttempts || 0) + 1;
-            remoteMemory.unsafeAttempts = attempts;
-            remoteMemory.unsafeUntil = Game.time + settings.unsafeRoomCooldown * Math.min(attempts, 10);
+        if(remoteMemory.status != 'unsafe' ||
+            !remoteMemory.unsafeUntil ||
+            Game.time >= remoteMemory.unsafeUntil ||
+            !getUnsafeRoomRecord(remoteName)) {
+            rememberUnsafeRemote(settings, remoteMemory, remoteName, reason);
         }
-        remoteMemory.status = 'unsafe';
-        remoteMemory.reason = reason;
         return;
     }
+
+    clearGlobalUnsafeRoom(remoteName);
+    rememberAdjacentRooms(remoteRoom, getSettings(homeRoom), homeRoom.name);
 
     var sources = remoteRoom.find(FIND_SOURCES);
     if(!sources.length) {
@@ -506,7 +598,7 @@ function updateRemoteMemory(room) {
         return settings;
     }
 
-    rememberAdjacentRooms(room, settings);
+    rememberAdjacentRooms(room, settings, room.name);
 
     for(var remoteName in settings.rooms) {
         updateVisibleRemoteRoom(room, remoteName, settings.rooms[remoteName]);
@@ -517,6 +609,10 @@ function updateRemoteMemory(room) {
 
 function canScoutRoom(room, remoteName, remoteMemory, settings) {
     if(!isAccessibleRemoteMapRoom(room.name, remoteName)) {
+        return false;
+    }
+
+    if(isGloballyUnsafeRoom(remoteName)) {
         return false;
     }
 
@@ -545,6 +641,10 @@ function canScoutRoom(room, remoteName, remoteMemory, settings) {
 
 function canUseRemote(room, remoteName, remoteMemory, settings) {
     if(!isAccessibleRemoteMapRoom(room.name, remoteName)) {
+        return false;
+    }
+
+    if(isGloballyUnsafeRoom(remoteName)) {
         return false;
     }
 
@@ -664,6 +764,11 @@ function getRemoteExplorationBlockers(room, remoteName, remoteMemory, settings) 
         blockers.push('unsafe cooldown ' + (remoteMemory.unsafeUntil - Game.time));
     }
 
+    var unsafeRecord = getUnsafeRoomRecord(remoteName);
+    if(unsafeRecord) {
+        blockers.push('global unsafe cooldown ' + (unsafeRecord.unsafeUntil - Game.time));
+    }
+
     if((remoteMemory.status == 'ready' || remoteMemory.status == 'unknown') &&
         isPersistentRemoteBlockReason(remoteMemory.reason)) {
         blockers.push('remembered ' + remoteMemory.reason);
@@ -676,18 +781,138 @@ function getRemoteExplorationBlockers(room, remoteName, remoteMemory, settings) 
     return blockers;
 }
 
+function copySharedRemoteMemory(room, remoteName, sourceMemory) {
+    var settings = getSettings(room);
+    if(!settings.rooms[remoteName]) {
+        settings.rooms[remoteName] = {};
+    }
+
+    var memory = settings.rooms[remoteName];
+    var sourceIsNewer = sourceMemory.lastScouted &&
+        (!memory.lastScouted || sourceMemory.lastScouted > memory.lastScouted);
+
+    if(sourceIsNewer || memory.status === undefined || memory.status == 'unknown') {
+        var fields = [
+            'enabled',
+            'status',
+            'reason',
+            'sourceIds',
+            'reservationUsername',
+            'reservationTicks',
+            'reservationObservedTick',
+            'lastScouted',
+            'mapStatus',
+            'unsafeAttempts',
+            'unsafeUntil'
+        ];
+
+        for(var i = 0; i < fields.length; i++) {
+            var key = fields[i];
+            if(sourceMemory[key] === undefined) {
+                delete memory[key];
+            }
+            else if(key == 'sourceIds' && sourceMemory.sourceIds) {
+                memory.sourceIds = sourceMemory.sourceIds.slice();
+            }
+            else {
+                memory[key] = sourceMemory[key];
+            }
+        }
+    }
+
+    memory.distance = getRoomLinearDistance(room.name, remoteName);
+    return memory;
+}
+
+function isClosestSpawnRoomForRemote(room, remoteName) {
+    var ownedRooms = getOwnedRooms();
+    var bestRoomName = null;
+    var bestDistance = 999999;
+
+    for(var i = 0; i < ownedRooms.length; i++) {
+        var candidateRoom = ownedRooms[i];
+        if(!hasOwnedSpawn(candidateRoom)) {
+            continue;
+        }
+
+        var settings = getSettings(candidateRoom);
+        if(settings.enabled === false ||
+            !candidateRoom.controller ||
+            candidateRoom.controller.level < settings.minHomeRcl) {
+            continue;
+        }
+
+        var distance = getRoomLinearDistance(candidateRoom.name, remoteName);
+        if(distance > settings.maxRooms) {
+            continue;
+        }
+
+        if(distance < bestDistance ||
+            (distance == bestDistance &&
+            (!bestRoomName || candidateRoom.name.localeCompare(bestRoomName) < 0))) {
+            bestDistance = distance;
+            bestRoomName = candidateRoom.name;
+        }
+    }
+
+    return !bestRoomName || bestRoomName == room.name;
+}
+
+function addRemoteCandidate(room, settings, remoteName, remoteMemory, roomsByName) {
+    if(remoteName == room.name || roomsByName[remoteName]) {
+        return;
+    }
+
+    if(!isClosestSpawnRoomForRemote(room, remoteName)) {
+        return;
+    }
+
+    var visibleRemote = Game.rooms[remoteName];
+    if(visibleRemote &&
+        visibleRemote.controller &&
+        visibleRemote.controller.my &&
+        hasOwnedSpawn(visibleRemote)) {
+        return;
+    }
+
+    if(canUseRemote(room, remoteName, remoteMemory, settings)) {
+        roomsByName[remoteName] = {
+            name: remoteName,
+            memory: remoteMemory,
+            priorityFlag: hasPriorityRemoteFlag(remoteName, settings),
+            spawnDistance: getRoomLinearDistance(room.name, remoteName)
+        };
+    }
+}
+
 function getActiveRemoteRooms(room) {
     var settings = getSettings(room);
-    var rooms = [];
+    var roomsByName = {};
 
     for(var remoteName in settings.rooms) {
-        if(canUseRemote(room, remoteName, settings.rooms[remoteName], settings)) {
-            rooms.push({
-                name: remoteName,
-                memory: settings.rooms[remoteName],
-                priorityFlag: hasPriorityRemoteFlag(remoteName, settings)
-            });
+        addRemoteCandidate(room, settings, remoteName, settings.rooms[remoteName], roomsByName);
+    }
+
+    var ownedRooms = getOwnedRooms();
+    for(var i = 0; i < ownedRooms.length; i++) {
+        if(ownedRooms[i].name == room.name) {
+            continue;
         }
+
+        var otherSettings = updateRemoteMemory(ownedRooms[i]);
+        if(otherSettings.enabled === false || !otherSettings.rooms) {
+            continue;
+        }
+
+        for(var sharedName in otherSettings.rooms) {
+            var sharedMemory = copySharedRemoteMemory(room, sharedName, otherSettings.rooms[sharedName]);
+            addRemoteCandidate(room, settings, sharedName, sharedMemory, roomsByName);
+        }
+    }
+
+    var rooms = [];
+    for(var candidateName in roomsByName) {
+        rooms.push(roomsByName[candidateName]);
     }
 
     rooms.sort(function(a, b) {
@@ -695,11 +920,12 @@ function getActiveRemoteRooms(room) {
             return a.priorityFlag ? -1 : 1;
         }
 
-        return (a.memory.distance || 1) - (b.memory.distance || 1) ||
+        return (a.spawnDistance || a.memory.distance || 1) - (b.spawnDistance || b.memory.distance || 1) ||
+            (a.memory.distance || 1) - (b.memory.distance || 1) ||
             a.name.localeCompare(b.name);
     });
 
-    return rooms.slice(0, settings.maxRooms);
+    return rooms;
 }
 
 function getRoomReportLine(roomName, remoteName, remoteMemory) {
@@ -798,8 +1024,11 @@ function countRemoteCreeps(homeRoomName, role, remoteRoomName, sourceId) {
     for(var name in Game.creeps) {
         var creep = Game.creeps[name];
         if(creep.memory.role != role ||
-            creep.memory.homeRoom != homeRoomName ||
             creep.memory.targetRoom != remoteRoomName) {
+            continue;
+        }
+
+        if(homeRoomName && creep.memory.homeRoom != homeRoomName) {
             continue;
         }
 
@@ -958,7 +1187,7 @@ function getClaimerTarget(homeRoomName, currentTargetRoom) {
     var rooms = getActiveRemoteRooms(homeRoom);
     for(var i = 0; i < rooms.length; i++) {
         if(needsRemoteClaim(homeRoom, rooms[i].name, rooms[i].memory, settings) &&
-            countRemoteCreeps(homeRoomName, 'claimer', rooms[i].name) === 0) {
+            countRemoteCreeps(null, 'claimer', rooms[i].name) === 0) {
             return rooms[i].name;
         }
     }
@@ -991,7 +1220,7 @@ function getScoutTarget(homeRoomName, currentTargetRoom) {
 
     for(var i = 0; i < allRooms.length; i++) {
         if(needsRemoteScout(homeRoom, allRooms[i].name, allRooms[i].memory, settings) &&
-            countRemoteCreeps(homeRoomName, 'scout', allRooms[i].name) === 0) {
+            countRemoteCreeps(null, 'scout', allRooms[i].name) === 0) {
             return allRooms[i].name;
         }
     }
@@ -1015,7 +1244,7 @@ function getReserverTarget(homeRoomName, currentTargetRoom) {
     var rooms = getActiveRemoteRooms(homeRoom);
     for(var i = 0; i < rooms.length; i++) {
         if(needsRemoteReservation(homeRoom, rooms[i].name, rooms[i].memory, settings) &&
-            countRemoteCreeps(homeRoomName, 'reserver', rooms[i].name) === 0) {
+            countRemoteCreeps(null, 'reserver', rooms[i].name) === 0) {
             return rooms[i].name;
         }
     }
@@ -1176,7 +1405,7 @@ function getRemoteSpawnDecision(room, settings) {
         var scoutMem = settings.rooms[scoutRoomName];
         if(!canUseRemote(room, scoutRoomName, scoutMem, settings) &&
             needsRemoteScout(room, scoutRoomName, scoutMem, settings) &&
-            countRemoteCreeps(room.name, 'scout', scoutRoomName) === 0) {
+            countRemoteCreeps(null, 'scout', scoutRoomName) === 0) {
             return {
                 request: makeScoutSpawnRequest(room.name, scoutRoomName),
                 reasons: [],
@@ -1199,10 +1428,10 @@ function getRemoteSpawnDecision(room, settings) {
         var readyMinerSources = countReadyRemoteMinerSources(sourceIds);
         var desiredHaulers = readyMinerSources * REMOTE_HAULERS_PER_MINER;
         var energy = getRemoteEnergyAmount(remote.name);
-        var haulers = countRemoteCreeps(room.name, 'remoteHauler', remote.name);
+        var haulers = countRemoteCreeps(null, 'remoteHauler', remote.name);
 
         if(needsRemoteScout(room, remote.name, remote.memory, settings)) {
-            if(countRemoteCreeps(room.name, 'scout', remote.name) === 0) {
+            if(countRemoteCreeps(null, 'scout', remote.name) === 0) {
                 return {
                     request: makeScoutSpawnRequest(room.name, remote.name),
                     reasons: [],
@@ -1215,7 +1444,7 @@ function getRemoteSpawnDecision(room, settings) {
         }
 
         if(needsClaimBootstrap(room, remote.name)) {
-            if(countRemoteCreeps(room.name, 'builder', remote.name) === 0) {
+            if(countRemoteCreeps(null, 'builder', remote.name) === 0) {
                 return {
                     request: makeBootstrapBuilderSpawnRequest(room.name, remote.name),
                     reasons: [],
@@ -1240,7 +1469,7 @@ function getRemoteSpawnDecision(room, settings) {
 
         var missingMiner = false;
         for(var sourceIndex = 0; sourceIndex < sourceIds.length; sourceIndex++) {
-            if(countRemoteCreeps(room.name, 'remoteMiner', remote.name, sourceIds[sourceIndex]) === 0) {
+            if(countRemoteCreeps(null, 'remoteMiner', remote.name, sourceIds[sourceIndex]) === 0) {
                 missingMiner = true;
                 return {
                     request: makeRemoteSpawnRequest(room.name, remote.name, sourceIds[sourceIndex]),
@@ -1256,7 +1485,7 @@ function getRemoteSpawnDecision(room, settings) {
         }
 
         if(needsRemoteReservation(room, remote.name, remote.memory, settings)) {
-            if(countRemoteCreeps(room.name, 'reserver', remote.name) === 0) {
+            if(countRemoteCreeps(null, 'reserver', remote.name) === 0) {
                 return {
                     request: makeReserverSpawnRequest(room.name, remote.name),
                     reasons: [],
@@ -1269,7 +1498,7 @@ function getRemoteSpawnDecision(room, settings) {
         }
 
         if(needsRemoteClaim(room, remote.name, remote.memory, settings)) {
-            if(countRemoteCreeps(room.name, 'claimer', remote.name) === 0) {
+            if(countRemoteCreeps(null, 'claimer', remote.name) === 0) {
                 return {
                     request: makeClaimerSpawnRequest(room.name, remote.name),
                     reasons: [],
@@ -1411,25 +1640,19 @@ function getRemoteSpawnReportLine(room, settings, spawnManager) {
     return line;
 }
 
-function findHomeDeliveryTarget(creep) {
-    var homeRoom = Game.rooms[creep.memory.homeRoom];
-    if(!homeRoom) {
-        return null;
-    }
-
-    var spawnsAndExtensions = homeRoom.find(FIND_MY_STRUCTURES, {
+function findDeliveryTargetInRoom(creep, room, structureTypes) {
+    var targets = room.find(FIND_MY_STRUCTURES, {
         filter: function(structure) {
-            return (structure.structureType == STRUCTURE_SPAWN ||
-                structure.structureType == STRUCTURE_EXTENSION) &&
+            return structureTypes.indexOf(structure.structureType) >= 0 &&
                 structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
         }
     });
 
-    if(spawnsAndExtensions.length) {
-        return getClosestByApproxRange(creep.pos, spawnsAndExtensions);
-    }
+    return getClosestByApproxRange(creep.pos, targets);
+}
 
-    var towers = homeRoom.find(FIND_MY_STRUCTURES, {
+function findTowerDeliveryTargetInRoom(creep, room) {
+    var towers = room.find(FIND_MY_STRUCTURES, {
         filter: function(structure) {
             return structure.structureType == STRUCTURE_TOWER &&
                 (!structure.isActive || structure.isActive()) &&
@@ -1438,19 +1661,40 @@ function findHomeDeliveryTarget(creep) {
         }
     });
 
-    if(towers.length) {
-        return getClosestByApproxRange(creep.pos, towers);
+    return getClosestByApproxRange(creep.pos, towers);
+}
+
+function findClosestDeliveryTarget(creep, finder) {
+    var rooms = getOwnedRooms();
+    var best = null;
+    var bestScore = 999999;
+
+    for(var i = 0; i < rooms.length; i++) {
+        var target = finder(rooms[i]);
+        if(!target) {
+            continue;
+        }
+
+        var score = getApproxRange(creep.pos, target.pos);
+        if(score < bestScore) {
+            best = target;
+            bestScore = score;
+        }
     }
 
-    var stores = homeRoom.find(FIND_MY_STRUCTURES, {
-        filter: function(structure) {
-            return (structure.structureType == STRUCTURE_STORAGE ||
-                structure.structureType == STRUCTURE_TERMINAL) &&
-                structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
-        }
-    });
+    return best;
+}
 
-    return getClosestByApproxRange(creep.pos, stores);
+function findHomeDeliveryTarget(creep) {
+    return findClosestDeliveryTarget(creep, function(room) {
+        return findDeliveryTargetInRoom(creep, room, [STRUCTURE_SPAWN, STRUCTURE_EXTENSION]);
+    }) ||
+        findClosestDeliveryTarget(creep, function(room) {
+            return findTowerDeliveryTargetInRoom(creep, room);
+        }) ||
+        findClosestDeliveryTarget(creep, function(room) {
+            return findDeliveryTargetInRoom(creep, room, [STRUCTURE_STORAGE, STRUCTURE_TERMINAL]);
+        });
 }
 
 function getHomeFallback(creep) {
@@ -1470,21 +1714,33 @@ function getHomeFallback(creep) {
 
 function markUnsafe(homeRoomName, targetRoomName, reason) {
     var homeRoom = Game.rooms[homeRoomName];
-    if(!homeRoom || !targetRoomName) {
+    if(!targetRoomName) {
         return;
     }
 
-    var settings = getSettings(homeRoom);
-    if(!settings.rooms[targetRoomName]) {
-        settings.rooms[targetRoomName] = {};
+    var ownedRooms = getOwnedRooms();
+    for(var i = 0; i < ownedRooms.length; i++) {
+        var settings = getSettings(ownedRooms[i]);
+        if(!settings.rooms[targetRoomName]) {
+            if(ownedRooms[i].name != homeRoomName) {
+                continue;
+            }
+
+            settings.rooms[targetRoomName] = {};
+        }
+
+        rememberUnsafeRemote(settings, settings.rooms[targetRoomName], targetRoomName, reason);
     }
 
-    var mem = settings.rooms[targetRoomName];
-    var attempts = (mem.unsafeAttempts || 0) + 1;
-    mem.status = 'unsafe';
-    mem.reason = reason || 'hostile threat';
-    mem.unsafeAttempts = attempts;
-    mem.unsafeUntil = Game.time + settings.unsafeRoomCooldown * Math.min(attempts, 10);
+    if(homeRoom && (!Memory.remote || !Memory.remote.unsafeRooms || !Memory.remote.unsafeRooms[targetRoomName])) {
+        var homeSettings = getSettings(homeRoom);
+        if(!homeSettings.rooms[targetRoomName]) {
+            homeSettings.rooms[targetRoomName] = {};
+        }
+
+        var mem = homeSettings.rooms[targetRoomName];
+        rememberUnsafeRemote(homeSettings, mem, targetRoomName, reason);
+    }
 }
 
 function moveHome(creep, intent) {

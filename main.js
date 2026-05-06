@@ -73,7 +73,7 @@ var DEFAULT_ROOM_MEMORY = {
         claimMinHomeRcl: 6,
         minHaulEnergy: 300,
         staleRoomTicks: 1500,
-        unsafeRoomCooldown: 500
+        unsafeRoomCooldown: 5000
     },
     market: {
         enabled: true
