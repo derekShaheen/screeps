@@ -48,9 +48,39 @@ function rememberUnsafe(creep, reason) {
     }
 }
 
+function rememberScoutCooldown(creep) {
+    if(!creep.memory.homeRoom || !creep.memory.targetRoom) {
+        return;
+    }
+
+    var homeRoom = Game.rooms[creep.memory.homeRoom];
+    if(!homeRoom) {
+        return;
+    }
+
+    var settings = remoteManager.getSettings(homeRoom);
+    creep.memory.blockedTargetRoom = creep.memory.targetRoom;
+    creep.memory.blockedTargetUntil = Game.time + Math.max(settings.unsafeRoomCooldown, settings.staleRoomTicks || 0);
+}
+
+function isBlockedScoutTarget(creep, roomName) {
+    return !!roomName &&
+        creep.memory.blockedTargetRoom == roomName &&
+        creep.memory.blockedTargetUntil &&
+        Game.time < creep.memory.blockedTargetUntil;
+}
+
+function clearExpiredScoutCooldown(creep) {
+    if(creep.memory.blockedTargetUntil && Game.time >= creep.memory.blockedTargetUntil) {
+        delete creep.memory.blockedTargetRoom;
+        delete creep.memory.blockedTargetUntil;
+    }
+}
+
 function retreatHome(creep, reason) {
     if(creep.room.name == creep.memory.targetRoom) {
         rememberUnsafe(creep, reason);
+        rememberScoutCooldown(creep);
     }
 
     creepUtils.announceIntent(creep, 'action:scoutRetreat', 'retreat');
@@ -71,7 +101,12 @@ var roleScout = {
             creep.memory.homeRoom = creep.room.name;
         }
 
+        clearExpiredScoutCooldown(creep);
+
         var nextTarget = remoteManager.getScoutTarget(creep.memory.homeRoom, creep.memory.targetRoom);
+        if(isBlockedScoutTarget(creep, nextTarget)) {
+            nextTarget = null;
+        }
         if(nextTarget) {
             creep.memory.targetRoom = nextTarget;
         }
@@ -90,6 +125,13 @@ var roleScout = {
 
         if(creep.room.name == creep.memory.targetRoom && remoteManager.hasHostileTower(creep.room)) {
             return retreatHome(creep, 'hostile tower');
+        }
+
+        if(!remoteManager.isRemoteUsable(creep.memory.homeRoom, creep.memory.targetRoom)) {
+            rememberScoutCooldown(creep);
+            delete creep.memory.targetRoom;
+            creepUtils.announceIntent(creep, 'action:idle', 'idle');
+            return moveHome(creep);
         }
 
         if(creep.room.name != creep.memory.targetRoom) {

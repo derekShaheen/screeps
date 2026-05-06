@@ -155,8 +155,12 @@ function canBuildRemoteInfrastructure(creep) {
 function chooseSource(creep) {
     if(creep.memory.sourceId) {
         var remembered = Game.getObjectById(creep.memory.sourceId);
-        if(remembered && remembered.pos.roomName == creep.room.name) {
+        if(remembered) {
             return remembered;
+        }
+
+        if(creep.room.name != creep.memory.targetRoom) {
+            return null;
         }
 
         delete creep.memory.sourceId;
@@ -204,7 +208,7 @@ function getContainerSite(source) {
 }
 
 function isBuildableContainerPos(room, pos) {
-    if(pos.x <= 0 || pos.x >= 49 || pos.y <= 0 || pos.y >= 49) {
+    if(pos.x <= 1 || pos.x >= 48 || pos.y <= 1 || pos.y >= 48) {
         return false;
     }
 
