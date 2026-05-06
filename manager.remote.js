@@ -13,6 +13,8 @@ var DEFAULT_SETTINGS = {
     priorityFlagName: 'Flag1'
 };
 
+var REMOTE_HAULERS_PER_MINER = 2;
+
 function getSettings(room) {
     if(!room.memory.remote) {
         room.memory.remote = {};
@@ -829,6 +831,18 @@ function hasSourceContainer(sourceId) {
     }).length > 0;
 }
 
+function countReadyRemoteMinerSources(sourceIds) {
+    var readySources = 0;
+
+    for(var i = 0; i < sourceIds.length; i++) {
+        if(hasSourceContainer(sourceIds[i])) {
+            readySources++;
+        }
+    }
+
+    return readySources;
+}
+
 function makeRemoteSpawnRequest(homeRoomName, remoteName, sourceId) {
     var memory = {
         role: 'remoteMiner',
@@ -958,21 +972,29 @@ function getRemoteSpawnDecision(room, settings) {
             roomReasons.push('reserver already assigned');
         }
 
+        var readyMinerSources = countReadyRemoteMinerSources(sourceIds);
+        var desiredHaulers = readyMinerSources * REMOTE_HAULERS_PER_MINER;
         var energy = getRemoteEnergyAmount(remote.name);
         var haulers = countRemoteCreeps(room.name, 'remoteHauler', remote.name);
-        if(energy >= settings.minHaulEnergy && haulers === 0) {
+        if(desiredHaulers > 0 &&
+            energy >= settings.minHaulEnergy &&
+            haulers < desiredHaulers) {
             return {
                 request: makeRemoteHaulerSpawnRequest(room.name, remote.name),
                 reasons: [],
-                detail: remote.name + ': remote energy ' + energy + ' ready for hauling'
+                detail: remote.name + ': haulers ' + haulers + '/' + desiredHaulers +
+                    ' for ' + readyMinerSources + ' ready miner source(s)'
             };
         }
 
-        if(energy < settings.minHaulEnergy) {
+        if(desiredHaulers === 0) {
+            roomReasons.push('waiting for miner container build');
+        }
+        else if(energy < settings.minHaulEnergy) {
             roomReasons.push('remote energy ' + energy + ' < minHaulEnergy ' + settings.minHaulEnergy);
         }
         else {
-            roomReasons.push('remoteHauler already assigned');
+            roomReasons.push('remoteHaulers assigned ' + haulers + '/' + desiredHaulers);
         }
 
         reasons.push(remote.name + ': ' + roomReasons.join('; '));
