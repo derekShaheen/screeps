@@ -19,6 +19,11 @@ var BODIES = {
         [MOVE, MOVE],
         [MOVE, MOVE, MOVE]
     ],
+    reserver: [
+        [CLAIM, MOVE],
+        [CLAIM, CLAIM, MOVE, MOVE],
+        [CLAIM, CLAIM, CLAIM, MOVE, MOVE, MOVE]
+    ],
     harvester: [
         [WORK, CARRY, MOVE],
         [WORK, WORK, CARRY, MOVE],
@@ -88,6 +93,7 @@ var MAX_CREEP_PARTS = 50;
 
 var LOW_STAFF_BODY_BUDGET = {
     scout: 150,
+    reserver: 650,
     harvester: 750,
     transporter: 800,
     upgrader: 800,
@@ -102,6 +108,7 @@ var LOW_STAFF_BODY_BUDGET = {
 
 var BODY_GROWTH = {
     scout: [MOVE],
+    reserver: [CLAIM, MOVE],
     harvester: [WORK, CARRY, MOVE],
     transporter: [CARRY, CARRY, MOVE],
     upgrader: [WORK, WORK, CARRY, MOVE],

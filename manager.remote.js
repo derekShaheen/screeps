@@ -6,6 +6,7 @@ var DEFAULT_SETTINGS = {
     maxRooms: 2,
     minHomeRcl: 3,
     minHaulEnergy: 300,
+    reserveRenewBelow: 1200,
     staleRoomTicks: 1500,
     unsafeRoomCooldown: 500,
     exitAccessCacheTicks: 100,
@@ -382,8 +383,19 @@ function updateVisibleRemoteRoom(homeRoom, remoteName, remoteMemory) {
     if(!remoteRoom.controller) {
         remoteMemory.status = 'blocked';
         remoteMemory.reason = 'no controller';
+        delete remoteMemory.reservationUsername;
+        remoteMemory.reservationTicks = 0;
+        remoteMemory.reservationObservedTick = Game.time;
         return;
     }
+
+    remoteMemory.reservationUsername = remoteRoom.controller.reservation ?
+        remoteRoom.controller.reservation.username :
+        null;
+    remoteMemory.reservationTicks = remoteRoom.controller.reservation ?
+        remoteRoom.controller.reservation.ticksToEnd :
+        0;
+    remoteMemory.reservationObservedTick = Game.time;
 
     var harvestBlockReason = getHarvestBlockReason(remoteRoom);
     if(harvestBlockReason) {
@@ -581,6 +593,9 @@ function getRoomReportLine(roomName, remoteName, remoteMemory) {
     var sources = remoteMemory.sourceIds ? remoteMemory.sourceIds.length : '?';
     var distance = remoteMemory.distance === undefined ? '?' : remoteMemory.distance;
     var mapStatus = remoteMemory.mapStatus ? ' map=' + remoteMemory.mapStatus : '';
+    var reserve = ' reserve=' +
+        (remoteMemory.reservationUsername ? remoteMemory.reservationUsername : 'none') +
+        ':' + getEstimatedReservationTicks(remoteMemory);
     var unsafe = remoteMemory.unsafeUntil && remoteMemory.unsafeUntil > Game.time ?
         ' cooldown ' + (remoteMemory.unsafeUntil - Game.time) :
         '';
@@ -601,6 +616,7 @@ function getRoomReportLine(roomName, remoteName, remoteMemory) {
         mapStatus +
         ' dist=' + distance +
         ' sources=' + sources +
+        reserve +
         unsafe +
         reason +
         enabled +
@@ -682,6 +698,36 @@ function countRemoteCreeps(homeRoomName, role, remoteRoomName, sourceId) {
     return count;
 }
 
+function getEstimatedReservationTicks(remoteMemory) {
+    if(!remoteMemory || !remoteMemory.reservationTicks) {
+        return 0;
+    }
+
+    var observedTick = remoteMemory.reservationObservedTick || remoteMemory.lastScouted || Game.time;
+    return Math.max(0, remoteMemory.reservationTicks - Math.max(0, Game.time - observedTick));
+}
+
+function needsRemoteReservation(room, remoteName, remoteMemory, settings) {
+    if(!remoteMemory || !settings || !canUseRemote(room, remoteName, remoteMemory, settings)) {
+        return false;
+    }
+
+    if(remoteMemory.status != 'ready' || !remoteMemory.sourceIds || !remoteMemory.sourceIds.length) {
+        return false;
+    }
+
+    var username = getMyUsername();
+    if(!username) {
+        return false;
+    }
+
+    if(remoteMemory.reservationUsername && remoteMemory.reservationUsername != username) {
+        return false;
+    }
+
+    return getEstimatedReservationTicks(remoteMemory) < settings.reserveRenewBelow;
+}
+
 function needsRemoteScout(room, remoteName, remoteMemory, settings) {
     if(!remoteMemory || !canUseRemote(room, remoteName, remoteMemory, settings)) {
         return false;
@@ -698,6 +744,19 @@ function makeScoutSpawnRequest(homeRoomName, remoteName) {
         bodyType: 'scout',
         memory: {
             role: 'scout',
+            homeRoom: homeRoomName,
+            targetRoom: remoteName,
+            working: false
+        }
+    };
+}
+
+function makeReserverSpawnRequest(homeRoomName, remoteName) {
+    return {
+        role: 'reserver',
+        bodyType: 'reserver',
+        memory: {
+            role: 'reserver',
             homeRoom: homeRoomName,
             targetRoom: remoteName,
             working: false
@@ -722,6 +781,30 @@ function getScoutTarget(homeRoomName, currentTargetRoom) {
     for(var i = 0; i < rooms.length; i++) {
         if(needsRemoteScout(homeRoom, rooms[i].name, rooms[i].memory, settings) &&
             countRemoteCreeps(homeRoomName, 'scout', rooms[i].name) === 0) {
+            return rooms[i].name;
+        }
+    }
+
+    return null;
+}
+
+function getReserverTarget(homeRoomName, currentTargetRoom) {
+    var homeRoom = Game.rooms[homeRoomName];
+    if(!homeRoom) {
+        return null;
+    }
+
+    var settings = updateRemoteMemory(homeRoom);
+    if(currentTargetRoom &&
+        settings.rooms[currentTargetRoom] &&
+        needsRemoteReservation(homeRoom, currentTargetRoom, settings.rooms[currentTargetRoom], settings)) {
+        return currentTargetRoom;
+    }
+
+    var rooms = getActiveRemoteRooms(homeRoom);
+    for(var i = 0; i < rooms.length; i++) {
+        if(needsRemoteReservation(homeRoom, rooms[i].name, rooms[i].memory, settings) &&
+            countRemoteCreeps(homeRoomName, 'reserver', rooms[i].name) === 0) {
             return rooms[i].name;
         }
     }
@@ -857,6 +940,24 @@ function getRemoteSpawnDecision(room, settings) {
             }
         }
 
+        var roomReasons = [];
+        if(!missingMiner) {
+            roomReasons.push('all source miners assigned (' + sourceIds.length + ')');
+        }
+
+        if(needsRemoteReservation(room, remote.name, remote.memory, settings)) {
+            if(countRemoteCreeps(room.name, 'reserver', remote.name) === 0) {
+                return {
+                    request: makeReserverSpawnRequest(room.name, remote.name),
+                    reasons: [],
+                    detail: remote.name + ': reservation ' + getEstimatedReservationTicks(remote.memory) +
+                        ' < reserveRenewBelow ' + settings.reserveRenewBelow
+                };
+            }
+
+            roomReasons.push('reserver already assigned');
+        }
+
         var energy = getRemoteEnergyAmount(remote.name);
         var haulers = countRemoteCreeps(room.name, 'remoteHauler', remote.name);
         if(energy >= settings.minHaulEnergy && haulers === 0) {
@@ -867,10 +968,6 @@ function getRemoteSpawnDecision(room, settings) {
             };
         }
 
-        var roomReasons = [];
-        if(!missingMiner) {
-            roomReasons.push('all source miners assigned (' + sourceIds.length + ')');
-        }
         if(energy < settings.minHaulEnergy) {
             roomReasons.push('remote energy ' + energy + ' < minHaulEnergy ' + settings.minHaulEnergy);
         }
@@ -1198,6 +1295,7 @@ function run(room) {
 module.exports = {
     deliverHome: deliverHome,
     findRemoteEnergyTarget: findRemoteEnergyTarget,
+    getReserverTarget: getReserverTarget,
     getScoutTarget: getScoutTarget,
     getSettings: getSettings,
     getReport: getReport,
