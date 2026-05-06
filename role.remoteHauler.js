@@ -133,6 +133,10 @@ var roleRemoteHauler = {
             return abortBlockedRemote(creep);
         }
 
+        if(!remoteManager.isRemoteWorkable(creep.memory.homeRoom, creep.memory.targetRoom)) {
+            return abortBlockedRemote(creep);
+        }
+
         if(creep.room.name == creep.memory.targetRoom && remoteManager.hasHostileTower(creep.room)) {
             return retreatHome(creep);
         }

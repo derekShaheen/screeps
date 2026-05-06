@@ -16,6 +16,7 @@ var DEFAULT_SETTINGS = {
 
 var REMOTE_HAULERS_PER_MINER = 1;
 var MIN_UNSAFE_ROOM_COOLDOWN = 5000;
+var MAX_RESERVATION_SPAWN_DISTANCE = 2;
 
 function getSettings(room) {
     if(!room.memory.remote) {
@@ -95,6 +96,25 @@ function getUnsafeCooldown(settings) {
         DEFAULT_SETTINGS.unsafeRoomCooldown;
 
     return Math.max(MIN_UNSAFE_ROOM_COOLDOWN, cooldown);
+}
+
+function getClosestOwnedSpawnRoomDistance(roomName) {
+    var rooms = getOwnedRooms();
+    var bestDistance = 999999;
+
+    for(var i = 0; i < rooms.length; i++) {
+        if(!hasOwnedSpawn(rooms[i])) {
+            continue;
+        }
+
+        bestDistance = Math.min(bestDistance, getRoomLinearDistance(rooms[i].name, roomName));
+    }
+
+    return bestDistance;
+}
+
+function isWithinReservationSpawnRange(roomName) {
+    return getClosestOwnedSpawnRoomDistance(roomName) <= MAX_RESERVATION_SPAWN_DISTANCE;
 }
 
 function isThreateningHostile(creep) {
@@ -1051,12 +1071,57 @@ function getEstimatedReservationTicks(remoteMemory) {
     return Math.max(0, remoteMemory.reservationTicks - Math.max(0, Game.time - observedTick));
 }
 
+function isRemoteReservedForWork(room, remoteName, remoteMemory) {
+    if(!remoteMemory) {
+        return false;
+    }
+
+    var remoteRoom = Game.rooms[remoteName];
+    if(remoteRoom && remoteRoom.controller) {
+        if(remoteRoom.controller.my) {
+            return true;
+        }
+
+        return !!(remoteRoom.controller.reservation &&
+            remoteRoom.controller.reservation.username == getMyUsername() &&
+            remoteRoom.controller.reservation.ticksToEnd > 0);
+    }
+
+    return remoteMemory.reservationUsername == getMyUsername() &&
+        getEstimatedReservationTicks(remoteMemory) > 0;
+}
+
+function isRemoteWorkable(homeRoomName, targetRoomName) {
+    var homeRoom = Game.rooms[homeRoomName];
+    if(!homeRoom || !targetRoomName) {
+        return false;
+    }
+
+    var settings = updateRemoteMemory(homeRoom);
+    var remoteMemory = settings.rooms[targetRoomName];
+    if(!remoteMemory) {
+        return false;
+    }
+
+    return canUseRemote(homeRoom, targetRoomName, remoteMemory, settings) &&
+        isRemoteReservedForWork(homeRoom, targetRoomName, remoteMemory);
+}
+
 function needsRemoteReservation(room, remoteName, remoteMemory, settings) {
     if(!remoteMemory || !settings || !canUseRemote(room, remoteName, remoteMemory, settings)) {
         return false;
     }
 
+    if(!isWithinReservationSpawnRange(remoteName)) {
+        return false;
+    }
+
     if(remoteMemory.status != 'ready' || !remoteMemory.sourceIds || !remoteMemory.sourceIds.length) {
+        return false;
+    }
+
+    var remoteRoom = Game.rooms[remoteName];
+    if(remoteRoom && remoteRoom.controller && remoteRoom.controller.my) {
         return false;
     }
 
@@ -1210,10 +1275,18 @@ function getScoutTarget(homeRoomName, currentTargetRoom) {
 
     var allRooms = [];
     for(var remoteName in settings.rooms) {
-        allRooms.push({ name: remoteName, memory: settings.rooms[remoteName] });
+        allRooms.push({
+            name: remoteName,
+            memory: settings.rooms[remoteName],
+            priorityFlag: hasPriorityRemoteFlag(remoteName, settings)
+        });
     }
 
     allRooms.sort(function(a, b) {
+        if(a.priorityFlag != b.priorityFlag) {
+            return a.priorityFlag ? -1 : 1;
+        }
+
         return (a.memory.distance || 1) - (b.memory.distance || 1) ||
             a.name.localeCompare(b.name);
     });
@@ -1456,6 +1529,47 @@ function getRemoteSpawnDecision(room, settings) {
             continue;
         }
 
+        if(needsRemoteClaim(room, remote.name, remote.memory, settings)) {
+            if(countRemoteCreeps(null, 'claimer', remote.name) === 0) {
+                return {
+                    request: makeClaimerSpawnRequest(room.name, remote.name),
+                    reasons: [],
+                    detail: remote.name + ': claim slot available at GCL ' + Game.gcl.level
+                };
+            }
+
+            reasons.push(remote.name + ': claimer already assigned');
+            continue;
+        }
+
+        if(needsRemoteReservation(room, remote.name, remote.memory, settings)) {
+            if(countRemoteCreeps(null, 'reserver', remote.name) === 0) {
+                return {
+                    request: makeReserverSpawnRequest(room.name, remote.name),
+                    reasons: [],
+                    detail: remote.name + ': reservation ' + getEstimatedReservationTicks(remote.memory) +
+                        ' < reserveRenewBelow ' + settings.reserveRenewBelow
+                };
+            }
+
+            reasons.push(remote.name + ': waiting for reserver before remote workers');
+            continue;
+        }
+
+        if(!isWithinReservationSpawnRange(remote.name) &&
+            !isRemoteReservedForWork(room, remote.name, remote.memory)) {
+            reasons.push(remote.name + ': reservation range ' +
+                getClosestOwnedSpawnRoomDistance(remote.name) +
+                ' > ' + MAX_RESERVATION_SPAWN_DISTANCE +
+                ' from owned spawn');
+            continue;
+        }
+
+        if(!isRemoteReservedForWork(room, remote.name, remote.memory)) {
+            reasons.push(remote.name + ': waiting for reservation before remote workers');
+            continue;
+        }
+
         if(desiredHaulers > 0 &&
             energy >= settings.minHaulEnergy &&
             haulers < desiredHaulers) {
@@ -1482,31 +1596,6 @@ function getRemoteSpawnDecision(room, settings) {
         var roomReasons = [];
         if(!missingMiner) {
             roomReasons.push('all source miners assigned (' + sourceIds.length + ')');
-        }
-
-        if(needsRemoteReservation(room, remote.name, remote.memory, settings)) {
-            if(countRemoteCreeps(null, 'reserver', remote.name) === 0) {
-                return {
-                    request: makeReserverSpawnRequest(room.name, remote.name),
-                    reasons: [],
-                    detail: remote.name + ': reservation ' + getEstimatedReservationTicks(remote.memory) +
-                        ' < reserveRenewBelow ' + settings.reserveRenewBelow
-                };
-            }
-
-            roomReasons.push('reserver already assigned');
-        }
-
-        if(needsRemoteClaim(room, remote.name, remote.memory, settings)) {
-            if(countRemoteCreeps(null, 'claimer', remote.name) === 0) {
-                return {
-                    request: makeClaimerSpawnRequest(room.name, remote.name),
-                    reasons: [],
-                    detail: remote.name + ': claim slot available at GCL ' + Game.gcl.level
-                };
-            }
-
-            roomReasons.push('claimer already assigned');
         }
 
         if(desiredHaulers === 0) {
@@ -1782,7 +1871,8 @@ function findRemoteEnergyTarget(creep, homeRoomName, preferredRoomName) {
         if(!remoteRoom ||
             hasThreats(remoteRoom) ||
             hasHostileTower(remoteRoom) ||
-            !canHarvestRemoteRoom(remoteRoom)) {
+            !canHarvestRemoteRoom(remoteRoom) ||
+            !isRemoteReservedForWork(homeRoom, rooms[i].name, rooms[i].memory)) {
             continue;
         }
 
@@ -1885,6 +1975,7 @@ module.exports = {
     getSpawnRequest: getSpawnRequest,
     hasHostileTower: hasHostileTower,
     hasThreats: hasThreats,
+    isRemoteWorkable: isRemoteWorkable,
     isRemoteScoutable: isRemoteScoutable,
     isRemoteUsable: isRemoteUsable,
     canHarvestRemoteRoom: canHarvestRemoteRoom,
