@@ -185,12 +185,30 @@ function getContainerSite(source) {
     return sites[0] || null;
 }
 
+function getAnyOrphanedContainerSite(room) {
+    var sites = room.find(FIND_CONSTRUCTION_SITES, {
+        filter: function(site) {
+            return site.structureType == STRUCTURE_CONTAINER && site.my !== false;
+        }
+    });
+
+    var sources = room.find(FIND_SOURCES);
+    var orphaned = sites.filter(function(site) {
+        return sources.every(function(src) {
+            return site.pos.getRangeTo(src) > 1;
+        });
+    });
+
+    return orphaned[0] || null;
+}
+
 function isBuildableContainerPos(room, pos) {
     if(pos.x <= 1 || pos.x >= 48 || pos.y <= 1 || pos.y >= 48) {
         return false;
     }
 
-    if(room.getTerrain().get(pos.x, pos.y) == TERRAIN_MASK_WALL) {
+    var terrain = (Game.rooms[pos.roomName] || room).getTerrain();
+    if(terrain.get(pos.x, pos.y) & TERRAIN_MASK_WALL) {
         return false;
     }
 
@@ -459,6 +477,9 @@ var roleRemoteMiner = {
         }
 
         var containerSite = getContainerSite(source);
+        if(!containerSite && canBuildRemoteInfrastructure(creep)) {
+            containerSite = getAnyOrphanedContainerSite(creep.room);
+        }
         if(containerSite && canBuildRemoteInfrastructure(creep)) {
             return buildContainerSite(creep, source, containerSite);
         }
