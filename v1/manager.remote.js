@@ -1091,6 +1091,22 @@ function isRemoteReservedForWork(room, remoteName, remoteMemory) {
         getEstimatedReservationTicks(remoteMemory) > 0;
 }
 
+function isRemoteOpenForWork(room, remoteName, remoteMemory, settings) {
+    if(!room ||
+        !remoteMemory ||
+        !settings ||
+        !canUseRemote(room, remoteName, remoteMemory, settings)) {
+        return false;
+    }
+
+    var remoteRoom = Game.rooms[remoteName];
+    if(remoteRoom) {
+        return canHarvestRemoteRoom(remoteRoom);
+    }
+
+    return true;
+}
+
 function isRemoteWorkable(homeRoomName, targetRoomName) {
     var homeRoom = Game.rooms[homeRoomName];
     if(!homeRoom || !targetRoomName) {
@@ -1103,8 +1119,7 @@ function isRemoteWorkable(homeRoomName, targetRoomName) {
         return false;
     }
 
-    return canUseRemote(homeRoom, targetRoomName, remoteMemory, settings) &&
-        isRemoteReservedForWork(homeRoom, targetRoomName, remoteMemory);
+    return isRemoteOpenForWork(homeRoom, targetRoomName, remoteMemory, settings);
 }
 
 function needsRemoteReservation(room, remoteName, remoteMemory, settings) {
@@ -1542,31 +1557,8 @@ function getRemoteSpawnDecision(room, settings) {
             continue;
         }
 
-        if(needsRemoteReservation(room, remote.name, remote.memory, settings)) {
-            if(countRemoteCreeps(null, 'reserver', remote.name) === 0) {
-                return {
-                    request: makeReserverSpawnRequest(room.name, remote.name),
-                    reasons: [],
-                    detail: remote.name + ': reservation ' + getEstimatedReservationTicks(remote.memory) +
-                        ' < reserveRenewBelow ' + settings.reserveRenewBelow
-                };
-            }
-
-            reasons.push(remote.name + ': waiting for reserver before remote workers');
-            continue;
-        }
-
-        if(!isWithinReservationSpawnRange(remote.name) &&
-            !isRemoteReservedForWork(room, remote.name, remote.memory)) {
-            reasons.push(remote.name + ': reservation range ' +
-                getClosestOwnedSpawnRoomDistance(remote.name) +
-                ' > ' + MAX_RESERVATION_SPAWN_DISTANCE +
-                ' from owned spawn');
-            continue;
-        }
-
-        if(!isRemoteReservedForWork(room, remote.name, remote.memory)) {
-            reasons.push(remote.name + ': waiting for reservation before remote workers');
+        if(!isRemoteOpenForWork(room, remote.name, remote.memory, settings)) {
+            reasons.push(remote.name + ': waiting for workable remote room');
             continue;
         }
 
@@ -1606,6 +1598,28 @@ function getRemoteSpawnDecision(room, settings) {
         }
         else {
             roomReasons.push('remoteHaulers assigned ' + haulers + '/' + desiredHaulers);
+        }
+
+        if(needsRemoteReservation(room, remote.name, remote.memory, settings)) {
+            var workersReadyForReservation = sourceIds.length > 0 &&
+                readyMinerSources > 0 &&
+                haulers >= desiredHaulers;
+
+            if(workersReadyForReservation) {
+                if(countRemoteCreeps(null, 'reserver', remote.name) === 0) {
+                    return {
+                        request: makeReserverSpawnRequest(room.name, remote.name),
+                        reasons: [],
+                        detail: remote.name + ': reservation ' + getEstimatedReservationTicks(remote.memory) +
+                            ' < reserveRenewBelow ' + settings.reserveRenewBelow
+                    };
+                }
+
+                roomReasons.push('reserver already assigned');
+            }
+            else {
+                roomReasons.push('waiting for remote miners/haulers before reserver');
+            }
         }
 
         reasons.push(remote.name + ': ' + roomReasons.join('; '));
@@ -1871,8 +1885,7 @@ function findRemoteEnergyTarget(creep, homeRoomName, preferredRoomName) {
         if(!remoteRoom ||
             hasThreats(remoteRoom) ||
             hasHostileTower(remoteRoom) ||
-            !canHarvestRemoteRoom(remoteRoom) ||
-            !isRemoteReservedForWork(homeRoom, rooms[i].name, rooms[i].memory)) {
+            !canHarvestRemoteRoom(remoteRoom)) {
             continue;
         }
 

@@ -460,7 +460,7 @@ var roleRemoteMiner = {
         }
 
         if(!remoteManager.isRemoteWorkable(creep.memory.homeRoom, creep.memory.targetRoom)) {
-            return workAtHomeAfterBlocked(creep, 'remote not reserved');
+            return workAtHomeAfterBlocked(creep, 'remote not workable');
         }
 
         if(creep.room.name != creep.memory.targetRoom) {
