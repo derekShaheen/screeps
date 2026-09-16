@@ -11,7 +11,7 @@ function environment() {
   Object.assign(constants, {OK:0, ERR_NO_PATH:-2, ERR_NOT_IN_RANGE:-9, FIND_EXIT_TOP:1, FIND_EXIT_RIGHT:3, FIND_EXIT_BOTTOM:5, FIND_EXIT_LEFT:7, TERRAIN_MASK_WALL:1});
   constants.BODYPART_COST = {MOVE:50, WORK:100, CARRY:50, ATTACK:80, RANGED_ATTACK:150, HEAL:250, CLAIM:600, TOUGH:10};
   const memory = {rooms:{},creeps:{}};
-  const game = {time:100,rooms:{},creeps:{},spawns:{},flags:{},gcl:{level:2},map:{describeExits:()=>({}),getRoomStatus:()=>({status:'normal'}),getRoomLinearDistance:()=>1},getObjectById:()=>null};
+  const game = {time:100,rooms:{},creeps:{},spawns:{},flags:{},gcl:{level:2},map:{findRoute:(from,to)=>[{room:to}],describeExits:()=>({}),getRoomStatus:()=>({status:'normal'}),getRoomLinearDistance:()=>1},getObjectById:()=>null};
   function RoomPosition(x,y,roomName) { Object.assign(this,{x,y,roomName}); }
   RoomPosition.prototype.getRangeTo = function(t) { t=t.pos||t; return t.roomName!==this.roomName ? Infinity : Math.max(Math.abs(this.x-t.x),Math.abs(this.y-t.y)); };
   RoomPosition.prototype.lookFor = () => [];
@@ -105,10 +105,12 @@ test('separate parent connections have independent exit caches',()=>{
   assert.equal(m.context.hasAccessibleExit(a,3,record,settings),false);assert.equal(m.context.hasAccessibleExit(b,7,record,settings),true);
   assert.equal(record.exitAccessByRoom[a.name].accessible,false);assert.equal(record.exitAccessByRoom[b.name].accessible,true);
 });
-test('fresh safe observations clear all old cooldown state',()=>{
+test('one quiet observation cannot clear an active hostile-room quarantine',()=>{
   const e=environment(),h=e.room('W1N1'),r=e.room('W2N1',false);h.memory.remote.rooms[r.name]={status:'unsafe',reason:'combat hostile',distance:1,unsafeUntil:5100,unsafeAttempts:1};
   e.memory.remote={unsafeRooms:{[r.name]:{unsafeUntil:5100}}};const m=e.load('manager.remote').exports;m.run(h);
-  assert.equal(h.memory.remote.rooms[r.name].unsafeUntil,undefined);assert.equal(m.isRemoteUsable(h.name,r.name),true);
+  assert.equal(h.memory.remote.rooms[r.name].unsafeUntil,5100);assert.equal(m.isRemoteUsable(h.name,r.name),false);
+  assert.ok(e.memory.remote.unsafeRooms[r.name]);
+  e.game.time=5101;m.run(h);assert.equal(h.memory.remote.rooms[r.name].unsafeUntil,undefined);assert.equal(m.isRemoteUsable(h.name,r.name),true);
 });
 test('three no-path results release a scout mission and start a bounded retry',()=>{
   const e=environment(),h=e.room('W1N1');addUnknown(e,h);e.overrides['utils.creep']={announceIntent(){},moveTo(){return -2;}};const c=scout(e,h);const role=e.load('role.scout').exports;
@@ -236,4 +238,70 @@ test('spawn execution protects missing essential harvesters before scouting',()=
   const e=environment(),h=e.room('W1N1');addUnknown(e,h);h.energyAvailable=300;const roles=[];
   const spawn={name:'Alpha',room:h,spawnCreep(body,name,opts){roles.push(opts.memory.role);return 0;}};
   e.load('manager.spawn').exports.run(spawn);assert.equal(roles[0],'harvester');
+});
+
+test('hostile destination is rejected even when a cached mission still points to it',()=>{
+  const e=environment(),h=e.room('W1N1'),c=scout(e,h),m=e.load('manager.remote').exports;
+  m.markUnsafe(h.name,'W2N1','combat hostile');
+  e.game.map.findRoute=(from,to,opts)=>{assert.equal(opts.routeCallback(to,from),Infinity);return -2;};
+  c.moveTo=()=>{throw Error('unsafe movement issued');};assert.equal(m.moveToRoom(c,'W2N1'),-2);
+});
+test('targets behind hostile transit are skipped for reachable directions, including replacements',()=>{
+  const e=environment(),h=e.room('W1N1'),m=e.load('manager.remote').exports;
+  addUnknown(e,h,'W2N1');addUnknown(e,h,'W1N2');m.markUnsafe(h.name,'W3N1','combat hostile');
+  e.game.flags.Flag1={pos:new e.RoomPosition(25,25,'W2N1')};
+  e.game.map.findRoute=(from,to,opts)=>to==='W2N1'&&opts.routeCallback('W3N1',from)===Infinity?-2:[{room:to}];
+  assert.equal(m.getScoutTarget(h.name,'W2N1'),'W1N2');
+  assert.equal(m.getScoutSpawnRequest(h).memory.targetRoom,'W1N2');
+});
+test('another colony cannot shorten a shared danger cooldown',()=>{
+  const e=environment(),a=e.room('W1N1'),b=e.room('W1N2'),m=e.load('manager.remote').exports;
+  a.memory.remote.rooms.W2N1={unsafeAttempts:5};addUnknown(e,b,'W2N1');
+  m.markUnsafe(a.name,'W2N1','combat hostile');
+  assert.equal(e.memory.remote.unsafeRooms.W2N1.unsafeUntil,30100);
+  assert.equal(b.memory.remote.rooms.W2N1.unsafeUntil,30100);
+});
+test('retreat continues into the home interior before a scout accepts another mission',()=>{
+  const e=environment(),h=e.room('W1N1'),r=e.room('W2N1',false);addUnknown(e,h,r.name);addUnknown(e,h,'W1N2');
+  r.find=type=>type===e.constants.FIND_HOSTILE_CREEPS?[{getActiveBodyparts:()=>1}]:[];
+  const moves=[];e.overrides['utils.creep']={moveTo(c,p){moves.push((p.pos||p).roomName);return 0;},announceIntent(){}};
+  const c=scout(e,h,r.name);c.room=r;c.pos=new e.RoomPosition(0,20,r.name);const role=e.load('role.scout').exports;
+  role.run(c);e.game.time++;c.room=h;c.pos=new e.RoomPosition(49,20,h.name);role.run(c);
+  assert.equal(c.memory.targetRoom,undefined);assert.equal(moves[1],h.name);
+  delete e.game.rooms[r.name];e.game.time++;c.pos.x=45;role.run(c);
+  assert.equal(c.memory.targetRoom,'W1N2');
+  delete e.game.creeps[c.name];assert.equal(e.load('manager.remote').exports.getScoutSpawnRequest(h).memory.targetRoom,'W1N2');
+});
+
+test('replacement scout rejects a quarantined priority room after visibility is lost',()=>{
+  const e=environment(),h=e.room('W1N1'),m=e.load('manager.remote').exports;
+  addUnknown(e,h,'W2N1');addUnknown(e,h,'W1N2');m.markUnsafe(h.name,'W2N1','combat hostile');
+  e.game.flags.Flag1={pos:new e.RoomPosition(25,25,'W2N1')};e.game.time+=1600;
+  assert.equal(m.getScoutSpawnRequest(h).memory.targetRoom,'W1N2');
+});
+test('no reachable safe targets means no replacement scout is spawned',()=>{
+  const e=environment(),h=e.room('W1N1');addUnknown(e,h);e.game.map.findRoute=()=>-2;
+  assert.equal(e.load('manager.remote').exports.getScoutSpawnRequest(h),null);
+});
+test('expired shared danger preserves backoff for a new colony encountering the same threat',()=>{
+  const e=environment(),a=e.room('W1N1'),m=e.load('manager.remote');
+  m.exports.markUnsafe(a.name,'W2N1','combat hostile');e.game.time=5101;
+  assert.equal(m.context.isGloballyUnsafeRoom('W2N1'),false);
+  const b=e.room('W1N2');m.context.rememberUnsafeRemote(m.exports.getSettings(b),{},'W2N1','combat hostile');
+  assert.equal(e.memory.remote.unsafeRooms.W2N1.attempts,2);
+  assert.equal(e.memory.remote.unsafeRooms.W2N1.unsafeUntil,15101);
+});
+test('a safe alternate route is eligible from the scouts actual room',()=>{
+  const e=environment(),h=e.room('W1N1'),r=e.room('W1N2',false),m=e.load('manager.remote').exports;
+  addUnknown(e,h,'W2N1');m.markUnsafe(h.name,'W3N1','combat hostile');
+  e.game.map.findRoute=(from,to,opts)=>{
+    assert.equal(from,r.name);assert.equal(opts.routeCallback('W3N1',from),Infinity);
+    assert.equal(opts.routeCallback('W2N2',from),1);return [{room:'W2N2'},{room:to}];
+  };
+  assert.equal(m.getScoutTarget(h.name,'W2N1',r.name),'W2N1');
+});
+test('finishing retreat inside home cannot path through a neighboring hostile room',()=>{
+  const e=environment(),h=e.room('W1N1'),c=scout(e,h);let options;
+  e.overrides['utils.creep']={moveTo(c,p,s,i,k,o){options=o;return 0;}};
+  e.load('manager.remote').exports.moveHome(c,'scoutRetreat');assert.equal(options.maxRooms,1);
 });

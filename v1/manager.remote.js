@@ -93,7 +93,7 @@ function getUnsafeRoomRecord(roomName) {
     var unsafeRooms = getUnsafeRoomMemory();
     var record = unsafeRooms[roomName];
     if(record && record.unsafeUntil && record.unsafeUntil <= Game.time) {
-        delete unsafeRooms[roomName];
+        // Retain encounter history so another colony also backs off on a retry.
         return null;
     }
 
@@ -184,22 +184,20 @@ function canHarvestRemoteRoom(room) {
 }
 
 function rememberUnsafeRemote(settings, remoteMemory, remoteName, reason) {
-    // One retreat is one encounter; repeated observations must not extend it each tick.
-    if(remoteMemory.unsafeUntil > Game.time && remoteMemory.reason == (reason || 'hostile threat')) {
-        getUnsafeRoomMemory()[remoteName] = {reason: remoteMemory.reason,
-            unsafeUntil: remoteMemory.unsafeUntil, attempts: remoteMemory.unsafeAttempts || 1,
-            lastSeen: Game.time};
-        return;
-    }
-    var attempts = (remoteMemory.unsafeAttempts || 0) + 1;
-    var cooldown = getUnsafeCooldown(settings);
-    var unsafeUntil = Game.time + cooldown * Math.min(attempts, 10);
+    // Danger is shared across colonies. Repeated sightings belong to one encounter,
+    // and no colony may shorten an existing quarantine.
+    var shared = getUnsafeRoomMemory()[remoteName] || {};
+    var existingUntil = Math.max(remoteMemory.unsafeUntil || 0, shared.unsafeUntil || 0);
+    var attempts = Math.max(remoteMemory.unsafeAttempts || 0, shared.attempts || 0);
+    var active = existingUntil > Game.time;
+    attempts = active ? Math.max(1, attempts) : attempts + 1;
+    var unsafeUntil = active ? existingUntil :
+        Game.time + getUnsafeCooldown(settings) * Math.min(attempts, 10);
 
     remoteMemory.status = 'unsafe';
     remoteMemory.reason = reason || 'hostile threat';
     remoteMemory.unsafeAttempts = attempts;
     remoteMemory.unsafeUntil = unsafeUntil;
-
     getUnsafeRoomMemory()[remoteName] = {
         reason: remoteMemory.reason,
         unsafeUntil: unsafeUntil,
@@ -245,7 +243,7 @@ function isUnsafeVisibleRoom(room) {
 }
 
 function shouldAvoidTravelRoom(homeRoomName, roomName, destinationRoomName) {
-    if(!roomName || roomName == destinationRoomName || roomName == homeRoomName) {
+    if(!roomName || roomName == homeRoomName) {
         return false;
     }
 
@@ -265,9 +263,10 @@ function shouldAvoidTravelRoom(homeRoomName, roomName, destinationRoomName) {
 
     var settings = getSettings(homeRoom);
     var remoteMemory = settings.rooms && settings.rooms[roomName] ? settings.rooms[roomName] : null;
-    return !!remoteMemory &&
-        ((remoteMemory.unsafeUntil && remoteMemory.unsafeUntil > Game.time) ||
-        remoteMemory.status == 'unsafe' ||
+    if(remoteMemory && remoteMemory.unsafeUntil > Game.time) { return true; }
+    // Expired danger may be revisited as a deliberate destination, never as transit.
+    if(roomName == destinationRoomName) { return false; }
+    return !!remoteMemory && (remoteMemory.status == 'unsafe' ||
         (remoteMemory.status == 'unknown' &&
             (remoteMemory.reason == 'combat hostile' || remoteMemory.reason == 'hostile tower')));
 }
@@ -582,10 +581,19 @@ function updateVisibleRemoteRoom(homeRoom, remoteName, remoteMemory) {
     rememberAdjacentRooms(remoteRoom, getSettings(homeRoom), homeRoom.name);
     if(hasThreats(remoteRoom) || hasHostileTower(remoteRoom)) {
         var threatSettings = getSettings(homeRoom);
-        if(!remoteMemory.unsafeUntil || Game.time >= remoteMemory.unsafeUntil) {
-            rememberUnsafeRemote(threatSettings, remoteMemory, remoteName,
-                hasHostileTower(remoteRoom) ? 'hostile tower' : 'combat hostile');
+        rememberUnsafeRemote(threatSettings, remoteMemory, remoteName,
+            hasHostileTower(remoteRoom) ? 'hostile tower' : 'combat hostile');
+        return;
+    }
+    // A temporary absence of an attacker is not proof that the room is safe.
+    var sharedDanger = getUnsafeRoomRecord(remoteName);
+    if(sharedDanger || remoteMemory.unsafeUntil > Game.time) {
+        if(sharedDanger) {
+            remoteMemory.unsafeUntil = Math.max(remoteMemory.unsafeUntil || 0, sharedDanger.unsafeUntil);
+            remoteMemory.unsafeAttempts = Math.max(remoteMemory.unsafeAttempts || 0, sharedDanger.attempts || 1);
+            remoteMemory.reason = sharedDanger.reason || remoteMemory.reason;
         }
+        remoteMemory.status = 'unsafe';
         return;
     }
     clearGlobalUnsafeRoom(remoteName);
@@ -1368,7 +1376,15 @@ function getClaimerTarget(homeRoomName, currentTargetRoom) {
     return null;
 }
 
-function getDiscoveryTarget(homeRoomName, currentTargetRoom) {
+function hasScoutRoute(homeRoomName, fromRoomName, targetRoomName) {
+    var route = Game.map.findRoute(fromRoomName, targetRoomName,
+        getRemoteTravelOptions(homeRoomName, targetRoomName));
+    if(Array.isArray(route) && route.length > 0 && route.length < 64) { return true; }
+    failScoutTarget(homeRoomName, targetRoomName, 'no safe scouting route');
+    return false;
+}
+
+function getDiscoveryTarget(homeRoomName, currentTargetRoom, fromRoomName) {
     var homeRoom = Game.rooms[homeRoomName];
     if(!homeRoom) {
         return null;
@@ -1377,7 +1393,8 @@ function getDiscoveryTarget(homeRoomName, currentTargetRoom) {
     var settings = updateRemoteMemory(homeRoom);
     if(currentTargetRoom &&
         settings.rooms[currentTargetRoom] &&
-        needsRemoteScout(homeRoom, currentTargetRoom, settings.rooms[currentTargetRoom], settings)) {
+        needsRemoteScout(homeRoom, currentTargetRoom, settings.rooms[currentTargetRoom], settings) &&
+        hasScoutRoute(homeRoomName, fromRoomName || homeRoomName, currentTargetRoom)) {
         return currentTargetRoom;
     }
 
@@ -1402,7 +1419,8 @@ function getDiscoveryTarget(homeRoomName, currentTargetRoom) {
     for(var i = 0; i < allRooms.length; i++) {
         if(needsRemoteScout(homeRoom, allRooms[i].name, allRooms[i].memory, settings) &&
             countRemoteCreeps(null, 'remoteMiner', allRooms[i].name) === 0 &&
-            countRemoteCreeps(null, 'scout', allRooms[i].name) === 0) {
+            countRemoteCreeps(null, 'scout', allRooms[i].name) === 0 &&
+            hasScoutRoute(homeRoomName, fromRoomName || homeRoomName, allRooms[i].name)) {
             return allRooms[i].name;
         }
     }
@@ -1410,8 +1428,8 @@ function getDiscoveryTarget(homeRoomName, currentTargetRoom) {
     return null;
 }
 
-function getScoutTarget(homeRoomName, currentTargetRoom) {
-    return getDiscoveryTarget(homeRoomName, currentTargetRoom);
+function getScoutTarget(homeRoomName, currentTargetRoom, fromRoomName) {
+    return getDiscoveryTarget(homeRoomName, currentTargetRoom, fromRoomName);
 }
 
 function getReserverTarget(homeRoomName, currentTargetRoom) {
@@ -2194,13 +2212,15 @@ function markUnsafe(homeRoomName, targetRoomName, reason) {
 function moveHome(creep, intent) {
     var homeFallback = getHomeFallback(creep);
     var homePos = homeFallback.pos || homeFallback;
+    var travelOptions = getRemoteTravelOptions(creep.memory.homeRoom || creep.room.name, homePos.roomName);
+    if(creep.room.name == homePos.roomName) { travelOptions.maxRooms = 1; }
     creepUtils.moveTo(
         creep,
         homeFallback,
         '#ff66cc',
         intent || 'home',
         'move:' + (intent || 'remoteHome'),
-        getRemoteTravelOptions(creep.memory.homeRoom || creep.room.name, homePos.roomName)
+        travelOptions
     );
     return true;
 }

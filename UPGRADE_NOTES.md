@@ -54,3 +54,14 @@ The suite uses isolated game objects and no network access or game credentials. 
 Only the project source and tests were updated. The client directory under AppData was not synchronized and no server code was uploaded. Deploy all updated modules together, including the new `utils.lifecycle.js`. Use the project's normal deployment workflow, then inspect `remoteReport()` and `Memory.runtimeErrors` during controlled live validation.
 
 Shared empire-wide intel, economic remote scoring, measured hauling throughput, and reservation of GCL slots for concurrent expansion missions remain follow-up work.
+
+
+## Hostile-room scout retry fix (2026-09-16)
+
+Danger quarantine now lasts for its full cooldown even if an attacker temporarily disappears. Shared warnings cannot be shortened by another colony, and encounter history survives cooldown expiry so a repeated threat increases the delay (5,000 ticks initially, up to 50,000). A safe observation after expiry clears the warning.
+
+Scouting assignments check for a safe room route before selecting a destination, including priority flags and replacement scouts. Unreachable candidates receive the existing scout retry delay while other directions are considered. A destination is no longer exempt from active danger checks. Existing scouts check routes from their current room.
+
+Scouts finish retreating into their home-room interior before taking another mission. Cached movement is cleared when retreat begins and ends, and movement within home stays in that room.
+
+Validation: 46 simulated regression tests, including quiet observations, shared cooldowns, blocked transit, priority flags, replacement scouts, safe detours, cooldown expiry, and border retreat. The real game pathfinder and live combat remain unverified. Deploy the updated manager.remote.js and role.scout.js together using the normal project workflow; this fix does not upload server code or synchronize the AppData client scripts.

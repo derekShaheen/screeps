@@ -1,4 +1,3 @@
-var creepUtils = require('utils.creep');
 var remoteManager = require('manager.remote');
 
 module.exports = {
@@ -13,11 +12,26 @@ module.exports = {
                 remoteManager.markUnsafe(homeName, creep.room.name,
                     remoteManager.hasHostileTower(creep.room) ? 'hostile tower' : 'combat hostile');
             }
+            if(!creep.memory.scoutRetreat) {
+                delete creep.memory._move;
+                delete creep.memory.remoteRoute;
+            }
+            creep.memory.scoutRetreat = true;
             delete creep.memory.targetRoom;
             delete creep.memory.scoutMission;
             return remoteManager.moveHome(creep, 'scoutRetreat');
         }
-        var target = remoteManager.getScoutTarget(homeName, creep.memory.targetRoom);
+        if(creep.memory.scoutRetreat) {
+            // Finish the retreat before a new mission can reverse direction at an exit.
+            if(creep.room.name != homeName || creep.pos.x <= 1 || creep.pos.x >= 48 ||
+                creep.pos.y <= 1 || creep.pos.y >= 48) {
+                return remoteManager.moveHome(creep, 'scoutRetreat');
+            }
+            delete creep.memory.scoutRetreat;
+            delete creep.memory._move;
+            delete creep.memory.remoteRoute;
+        }
+        var target = remoteManager.getScoutTarget(homeName, creep.memory.targetRoom, creep.room.name);
         if(!target) {
             delete creep.memory.targetRoom;
             delete creep.memory.scoutMission;
