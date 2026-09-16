@@ -20,6 +20,8 @@ REPLANNABLE_ROAD_BLOCKERS[STRUCTURE_LINK] = true;
 REPLANNABLE_ROAD_BLOCKERS[STRUCTURE_LAB] = true;
 REPLANNABLE_ROAD_BLOCKERS[STRUCTURE_WALL] = true;
 
+var PLANNER_STATUS_LOG_INTERVAL = 1000;
+
 function formatPos(pos) {
     return pos.roomName + ':' + pos.x + ',' + pos.y;
 }
@@ -1896,7 +1898,7 @@ function canPlanDefense(room, settings) {
         debug.log(
             'debugConstruction',
             room.name + ' defense planner waiting for tower',
-            20
+            PLANNER_STATUS_LOG_INTERVAL
         );
         return false;
     }
@@ -1983,7 +1985,7 @@ function logInfrastructureIdle(room, settings) {
         'debugConstruction',
         room.name + ' infrastructure planner found no eligible sites at RCL ' +
             level + ': ' + parts.join(', '),
-        20
+        PLANNER_STATUS_LOG_INTERVAL
     );
 }
 
@@ -2512,7 +2514,7 @@ function planExitSegment(room, segment, remaining) {
         debug.log(
             'debugConstruction',
             room.name + ' exit ' + status.planned.side + ' seal already blocks traversal',
-            50
+            PLANNER_STATUS_LOG_INTERVAL
         );
         return status;
     }
@@ -2570,7 +2572,7 @@ function planExitSegment(room, segment, remaining) {
             room.name + ' exit ' + status.planned.side + ' seal has ' +
                 status.blocked + ' blocked tile(s), gate ' + status.planned.gate +
                 ', span ' + status.planned.start + '-' + status.planned.end,
-            10
+            PLANNER_STATUS_LOG_INTERVAL
         );
     }
 
@@ -2600,7 +2602,7 @@ function planExitWalls(room, remaining) {
             debug.log(
                 'debugConstruction',
                 room.name + ' exit wall planner verified ' + segments.length + ' sealed exit segments',
-                50
+                PLANNER_STATUS_LOG_INTERVAL
             );
         }
         else {
@@ -2608,7 +2610,7 @@ function planExitWalls(room, remaining) {
                 'debugConstruction',
                 room.name + ' exit wall planner scanned ' + segments.length +
                     ' exit segments, missing ' + missing + ', blocked ' + blocked,
-                10
+                PLANNER_STATUS_LOG_INTERVAL
             );
         }
     }
@@ -2632,7 +2634,7 @@ function planDefense(room, settings, totalBudget) {
         debug.log(
             'debugConstruction',
             room.name + ' defense planner paused: ' + existingDefenseSites + '/' + maxDefenseSites + ' defense sites',
-            20
+            PLANNER_STATUS_LOG_INTERVAL
         );
         return 0;
     }
@@ -2652,7 +2654,7 @@ function planDefense(room, settings, totalBudget) {
         debug.log(
             'debugConstruction',
             room.name + ' defense planner found no valid defense placements',
-            10
+            PLANNER_STATUS_LOG_INTERVAL
         );
     }
 
@@ -3141,14 +3143,14 @@ var constructionManager = {
             debug.log(
                 'debugConstruction',
                 room.name + ' construction planner paused: ' + totalSites + '/' + maxTotalSites + ' total sites',
-                20
+                PLANNER_STATUS_LOG_INTERVAL
             );
             drawConstructionPlannerVisuals(room, settings);
             return;
         }
 
         if(shouldPrioritizeDefense(room, settings)) {
-            debug.log('debugConstruction', room.name + ' prioritizing early defense sites', 10);
+            debug.log('debugConstruction', room.name + ' prioritizing early defense sites', PLANNER_STATUS_LOG_INTERVAL);
             var earlyDefensePlaced = planDefense(room, settings, maxTotalSites - totalSites);
             totalSites += earlyDefensePlaced;
         }

@@ -1,5 +1,6 @@
 var debug = require('utils.debug');
 var spawnManager = require('manager.spawn');
+var remoteManager = require('manager.remote');
 
 function createStartupKey() {
     var tickPart = typeof Game != 'undefined' && Game.time !== undefined ?
@@ -184,7 +185,6 @@ function siteIs(site, structureType) {
 function getRemoteWorkerCounts(room) {
     var counts = {
         claimer: 0,
-        scout: 0,
         reserver: 0,
         remoteMiner: 0,
         remoteHauler: 0
@@ -204,14 +204,159 @@ function getRemoteWorkerCounts(room) {
     return counts;
 }
 
+function getRemoteSlotSummary(room) {
+    var settings = remoteManager.getSettings(room);
+    var slots = 0;
+    var assigned = 0;
+    var discoveryRooms = 0;
+
+    if(!settings.rooms) {
+        return {
+            assigned: assigned,
+            slots: slots,
+            discoveryRooms: discoveryRooms
+        };
+    }
+
+    for(var remoteName in settings.rooms) {
+        var remoteMemory = settings.rooms[remoteName];
+        if(remoteMemory.status != 'ready' ||
+            !remoteMemory.sourceIds ||
+            remoteMemory.sourceIds.length === 0) {
+            if(remoteMemory.enabled !== false &&
+                (remoteMemory.status == 'unknown' ||
+                !remoteMemory.sourceIds ||
+                remoteMemory.sourceIds.length === 0)) {
+                discoveryRooms++;
+            }
+            continue;
+        }
+
+        slots += remoteMemory.harvestSlots || remoteMemory.sourceIds.length;
+
+        for(var i = 0; i < remoteMemory.sourceIds.length; i++) {
+            var sourceId = remoteMemory.sourceIds[i];
+            var sourceCapacity = remoteMemory.sourceHarvestSlots &&
+                remoteMemory.sourceHarvestSlots[sourceId] ?
+                remoteMemory.sourceHarvestSlots[sourceId] :
+                1;
+
+            var sourceAssigned = 0;
+            for(var name in Game.creeps) {
+                var creep = Game.creeps[name];
+                if(creep.memory.homeRoom == room.name &&
+                    creep.memory.role == 'remoteMiner' &&
+                    creep.memory.targetRoom == remoteName &&
+                    creep.memory.sourceId == sourceId &&
+                    !creep.spawning) {
+                    sourceAssigned++;
+                }
+            }
+
+            assigned += Math.min(sourceAssigned, sourceCapacity);
+        }
+    }
+
+    return {
+        assigned: assigned,
+        slots: slots,
+        discoveryRooms: discoveryRooms
+    };
+}
+
+function countRemoteMinersForRoom(homeRoomName, remoteRoomName) {
+    var count = 0;
+    for(var name in Game.creeps) {
+        var creep = Game.creeps[name];
+        if(creep.memory.homeRoom == homeRoomName &&
+            creep.memory.role == 'remoteMiner' &&
+            creep.memory.targetRoom == remoteRoomName &&
+            !creep.spawning) {
+            count++;
+        }
+    }
+
+    return count;
+}
+
+function formatEnergyAmount(amount) {
+    if(amount >= 10000) {
+        return Math.floor(amount / 1000) + 'k';
+    }
+
+    if(amount >= 1000) {
+        return Math.floor(amount / 100) / 10 + 'k';
+    }
+
+    return String(amount);
+}
+
+function drawRemoteEnergyMapVisuals(room) {
+    if(!Game.map ||
+        !Game.map.visual ||
+        typeof Game.map.visual.text != 'function') {
+        return;
+    }
+
+    var settings = remoteManager.getSettings(room);
+    if(!settings.rooms) {
+        return;
+    }
+
+    for(var remoteName in settings.rooms) {
+        var remoteMemory = settings.rooms[remoteName];
+        if(remoteMemory.status != 'ready' ||
+            !remoteMemory.sourceIds ||
+            remoteMemory.sourceIds.length === 0) {
+            continue;
+        }
+
+        var miners = countRemoteMinersForRoom(room.name, remoteName);
+        if(miners <= 0) {
+            continue;
+        }
+
+        var energy = remoteManager.getRemoteEnergyAmount(remoteName);
+        if(energy <= 0 && !Game.rooms[remoteName]) {
+            continue;
+        }
+
+        var color = energy >= 3000 ? '#ffcc33' :
+            energy >= 1000 ? '#ffe680' :
+            '#b6ff66';
+        var label = 'haul ' + formatEnergyAmount(energy);
+
+        Game.map.visual.text(label, new RoomPosition(25, 24, remoteName), {
+            align: 'center',
+            color: color,
+            fontSize: 7,
+            opacity: 0.9,
+            stroke: '#111111',
+            strokeWidth: 0.9
+        });
+
+        Game.map.visual.text('RM ' + miners, new RoomPosition(25, 31, remoteName), {
+            align: 'center',
+            color: '#ffffff',
+            fontSize: 5,
+            opacity: 0.75,
+            stroke: '#111111',
+            strokeWidth: 0.7
+        });
+    }
+}
+
 var uiManager = {
     run: function(room) {
         if(!debug.enabled('debugVisuals')) {
             return;
         }
 
+        drawRemoteEnergyMapVisuals(room);
+
         var counts = spawnManager.countRoles(room);
-    var remoteCounts = getRemoteWorkerCounts(room);
+        var remoteCounts = getRemoteWorkerCounts(room);
+        var remoteSlots = getRemoteSlotSummary(room);
         var targets = spawnManager.getTargets(room, counts);
         var sites = room.find(FIND_CONSTRUCTION_SITES).length;
         var controller = room.controller;
@@ -229,9 +374,10 @@ var uiManager = {
                 ' | M ' + counts.mineralHarvester + '/' + targets.mineralHarvester +
                 ' | D ' + counts.defender + '/' + targets.defender,
             'Remote: Cl ' + remoteCounts.claimer +
-                ' | Sc ' + remoteCounts.scout +
                 ' | Re ' + remoteCounts.reserver +
                 ' | RM ' + remoteCounts.remoteMiner +
+                ' (' + remoteSlots.assigned + '/' + remoteSlots.slots + ' slots)' +
+                (remoteSlots.discoveryRooms ? ' | discover ' + remoteSlots.discoveryRooms : '') +
                 ' | RH ' + remoteCounts.remoteHauler,
             'Spawn: ' + getSpawnText(room),
             'Towers: ' + getTowerText(room),
@@ -241,7 +387,7 @@ var uiManager = {
 
         var x = 1;
         var y = 1;
-        room.visual.rect(x - 0.4, y - 0.8, 18.4, lines.length + 0.3, {
+        room.visual.rect(x - 0.4, y - 0.8, 28.4, lines.length + 0.3, {
             fill: '#111111',
             opacity: 0.35,
             stroke: '#66ccff',

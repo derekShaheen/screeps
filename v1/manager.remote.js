@@ -1,20 +1,25 @@
+var lifecycle = require('utils.lifecycle');
 var creepUtils = require('utils.creep');
 var debug = require('utils.debug');
 
 var DEFAULT_SETTINGS = {
     enabled: true,
     maxRooms: 2,
-    minHomeRcl: 3,
+    minHomeRcl: 2,
     claimMinHomeRcl: 6,
     minHaulEnergy: 300,
     reserveRenewBelow: 1200,
     staleRoomTicks: 1500,
     unsafeRoomCooldown: 5000,
     exitAccessCacheTicks: 100,
-    priorityFlagName: 'Flag1'
+    priorityFlagName: 'Flag1',
+    maxScouts: 1,
+    scoutStuckTicks: 25,
+    scoutMissionTicks: 300,
+    scoutRetryTicks: 250
 };
 
-var REMOTE_HAULERS_PER_MINER = 1;
+var REMOTE_FULL_HAULER_COST = 600;
 var MIN_UNSAFE_ROOM_COOLDOWN = 5000;
 var MAX_RESERVATION_SPAWN_DISTANCE = 2;
 
@@ -29,10 +34,26 @@ function getSettings(room) {
         }
     }
 
+    if(room.memory.remote.minHomeRcl == 1 && DEFAULT_SETTINGS.minHomeRcl < 1) {
+        room.memory.remote.minHomeRcl = DEFAULT_SETTINGS.minHomeRcl;
+    }
+
     if(!room.memory.remote.rooms) {
         room.memory.remote.rooms = {};
     }
 
+    if(room.memory.remote.explorationVersion !== 2) {
+        for(var remoteName in room.memory.remote.rooms) {
+            var record = room.memory.remote.rooms[remoteName];
+            delete record.exitAccessible;
+            delete record.exitAccessChecked;
+            if(record.reason == 'exit inaccessible') {
+                record.status = 'unknown';
+                delete record.reason;
+            }
+        }
+        room.memory.remote.explorationVersion = 2;
+    }
     return room.memory.remote;
 }
 
@@ -163,6 +184,13 @@ function canHarvestRemoteRoom(room) {
 }
 
 function rememberUnsafeRemote(settings, remoteMemory, remoteName, reason) {
+    // One retreat is one encounter; repeated observations must not extend it each tick.
+    if(remoteMemory.unsafeUntil > Game.time && remoteMemory.reason == (reason || 'hostile threat')) {
+        getUnsafeRoomMemory()[remoteName] = {reason: remoteMemory.reason,
+            unsafeUntil: remoteMemory.unsafeUntil, attempts: remoteMemory.unsafeAttempts || 1,
+            lastSeen: Game.time};
+        return;
+    }
     var attempts = (remoteMemory.unsafeAttempts || 0) + 1;
     var cooldown = getUnsafeCooldown(settings);
     var unsafeUntil = Game.time + cooldown * Math.min(attempts, 10);
@@ -246,7 +274,15 @@ function shouldAvoidTravelRoom(homeRoomName, roomName, destinationRoomName) {
 
 function getRemoteTravelOptions(homeRoomName, destinationRoomName) {
     return {
-        routeCallback: function(roomName) {
+        routeCallback: function(roomName, fromRoomName) {
+            if(!isAccessibleRemoteMapRoom(homeRoomName, roomName)) { return Infinity; }
+            var home = Game.rooms[homeRoomName];
+            var settings = home && getSettings(home);
+            var record = settings && settings.rooms[roomName];
+            var edge = record && record.exitAccessByRoom && record.exitAccessByRoom[fromRoomName];
+            if(edge && !edge.accessible && Game.time - edge.tick < settings.exitAccessCacheTicks) {
+                return Infinity;
+            }
             if(shouldAvoidTravelRoom(homeRoomName, roomName, destinationRoomName)) {
                 return Infinity;
             }
@@ -284,11 +320,23 @@ function getClosestByApproxRange(fromPos, targets) {
 }
 
 function getMapRoomStatus(roomName) {
-    if(!Game.map.getRoomStatus) {
+    if(!roomName || !Game.map.getRoomStatus) {
         return 'normal';
     }
 
-    var status = Game.map.getRoomStatus(roomName);
+    var status;
+    try {
+        status = Game.map.getRoomStatus(roomName);
+    }
+    catch(err) {
+        debug.log(
+            'debugRemote',
+            'map status unavailable for ' + roomName + ': ' + err,
+            20
+        );
+        return 'normal';
+    }
+
     return status && status.status ? status.status : 'normal';
 }
 
@@ -445,26 +493,17 @@ function canReachExit(room, exitPositions) {
 }
 
 function hasAccessibleExit(room, direction, remoteMemory, settings) {
-    if(!direction) {
-        return true;
+    if(!direction) { return true; }
+    var cacheTicks = Math.max(1, settings.exitAccessCacheTicks || 100);
+    var edges = remoteMemory.exitAccessByRoom || (remoteMemory.exitAccessByRoom = {});
+    var cached = edges[room.name];
+    if(cached && cached.direction == direction && Game.time - cached.tick < cacheTicks) {
+        return cached.accessible;
     }
-
-    var cacheTicks = typeof settings.exitAccessCacheTicks == 'number' ?
-        Math.max(1, settings.exitAccessCacheTicks) :
-        DEFAULT_SETTINGS.exitAccessCacheTicks;
-    if(remoteMemory.exitAccessChecked &&
-        remoteMemory.exitAccessible !== undefined &&
-        Game.time - remoteMemory.exitAccessChecked < cacheTicks) {
-        return remoteMemory.exitAccessible === true;
-    }
-
-    var findConstant = getExitFindConstant(direction);
-    var exitPositions = findConstant === null ? [] : room.find(findConstant);
-    var accessible = hasOpenExitTile(room, exitPositions) &&
-        canReachExit(room, exitPositions);
-
-    remoteMemory.exitAccessible = accessible;
-    remoteMemory.exitAccessChecked = Game.time;
+    var constant = getExitFindConstant(direction);
+    var exits = constant === null ? [] : room.find(constant);
+    var accessible = hasOpenExitTile(room, exits) && canReachExit(room, exits);
+    edges[room.name] = {direction: direction, accessible: accessible, tick: Game.time};
     return accessible;
 }
 
@@ -506,11 +545,8 @@ function rememberAdjacentRooms(room, settings, homeRoomName) {
             continue;
         }
 
-        if(!hasAccessibleExit(room, direction, settings.rooms[roomName], settings)) {
-            settings.rooms[roomName].status = 'blocked';
-            settings.rooms[roomName].reason = 'exit inaccessible';
-            continue;
-        }
+        // Accessibility belongs to this directed connection, not the destination.
+        hasAccessibleExit(room, direction, settings.rooms[roomName], settings);
 
         if(settings.rooms[roomName].status == 'blocked' &&
             settings.rooms[roomName].reason &&
@@ -530,26 +566,31 @@ function updateVisibleRemoteRoom(homeRoom, remoteName, remoteMemory) {
         return;
     }
 
-    if(remoteMemory.exitAccessible === false) {
-        remoteMemory.status = 'blocked';
-        remoteMemory.reason = 'exit inaccessible';
-        return;
-    }
-
     var remoteRoom = Game.rooms[remoteName];
     if(!remoteRoom) {
         if(remoteMemory.lastScouted &&
             Game.time - remoteMemory.lastScouted > getSettings(homeRoom).staleRoomTicks) {
             remoteMemory.status = 'unknown';
-            if(remoteMemory.unsafeAttempts > 0) {
-                remoteMemory.unsafeAttempts = remoteMemory.unsafeAttempts - 1;
-            }
         }
         return;
     }
 
     remoteMemory.lastScouted = Game.time;
     remoteMemory.distance = getRoomLinearDistance(homeRoom.name, remoteName);
+    remoteMemory.controllerOwner = remoteRoom.controller && remoteRoom.controller.owner ? remoteRoom.controller.owner.username : null;
+    remoteMemory.hasController = !!remoteRoom.controller;
+    rememberAdjacentRooms(remoteRoom, getSettings(homeRoom), homeRoom.name);
+    if(hasThreats(remoteRoom) || hasHostileTower(remoteRoom)) {
+        var threatSettings = getSettings(homeRoom);
+        if(!remoteMemory.unsafeUntil || Game.time >= remoteMemory.unsafeUntil) {
+            rememberUnsafeRemote(threatSettings, remoteMemory, remoteName,
+                hasHostileTower(remoteRoom) ? 'hostile tower' : 'combat hostile');
+        }
+        return;
+    }
+    clearGlobalUnsafeRoom(remoteName);
+    delete remoteMemory.unsafeUntil;
+    delete remoteMemory.unsafeAttempts;
 
     if(!remoteRoom.controller) {
         remoteMemory.status = 'blocked';
@@ -575,21 +616,6 @@ function updateVisibleRemoteRoom(homeRoom, remoteName, remoteMemory) {
         return;
     }
 
-    if(hasThreats(remoteRoom) || hasHostileTower(remoteRoom)) {
-        var settings = getSettings(homeRoom);
-        var reason = hasHostileTower(remoteRoom) ? 'hostile tower' : 'combat hostile';
-        if(remoteMemory.status != 'unsafe' ||
-            !remoteMemory.unsafeUntil ||
-            Game.time >= remoteMemory.unsafeUntil ||
-            !getUnsafeRoomRecord(remoteName)) {
-            rememberUnsafeRemote(settings, remoteMemory, remoteName, reason);
-        }
-        return;
-    }
-
-    clearGlobalUnsafeRoom(remoteName);
-    rememberAdjacentRooms(remoteRoom, getSettings(homeRoom), homeRoom.name);
-
     var sources = remoteRoom.find(FIND_SOURCES);
     if(!sources.length) {
         remoteMemory.status = 'empty';
@@ -603,6 +629,7 @@ function updateVisibleRemoteRoom(homeRoom, remoteName, remoteMemory) {
     remoteMemory.sourceIds = sources.map(function(source) {
         return source.id;
     });
+    rememberRemoteHarvestSlots(remoteMemory, sources);
 }
 
 function updateRemoteMemory(room) {
@@ -618,6 +645,11 @@ function updateRemoteMemory(room) {
         return settings;
     }
 
+    var priorityFlag = Game.flags[settings.priorityFlagName];
+    if(priorityFlag && priorityFlag.pos.roomName != room.name && !settings.rooms[priorityFlag.pos.roomName]) {
+        settings.rooms[priorityFlag.pos.roomName] = {enabled: true, status: 'unknown',
+            distance: getRoomLinearDistance(room.name, priorityFlag.pos.roomName)};
+    }
     rememberAdjacentRooms(room, settings, room.name);
 
     for(var remoteName in settings.rooms) {
@@ -628,38 +660,20 @@ function updateRemoteMemory(room) {
 }
 
 function canScoutRoom(room, remoteName, remoteMemory, settings) {
-    if(!isAccessibleRemoteMapRoom(room.name, remoteName)) {
-        return false;
-    }
-
-    if(isGloballyUnsafeRoom(remoteName)) {
-        return false;
-    }
-
-    if(remoteMemory.exitAccessible === false) {
-        return false;
-    }
-
-    if(remoteMemory.enabled === false) {
-        return false;
-    }
-
-    if(remoteMemory.distance && remoteMemory.distance > settings.maxRooms) {
-        return false;
-    }
-
-    if(remoteMemory.unsafeUntil && Game.time < remoteMemory.unsafeUntil) {
-        return false;
-    }
-
-    if(isPersistentRemoteBlockReason(remoteMemory.reason)) {
-        return false;
-    }
-
-    return remoteMemory.status == 'ready' || remoteMemory.status == 'unknown';
+    if(!room || !room.controller || !room.controller.my || settings.enabled === false ||
+        room.controller.level < settings.minHomeRcl || remoteMemory.enabled === false ||
+        !isAccessibleRemoteMapRoom(room.name, remoteName) ||
+        (remoteMemory.distance && remoteMemory.distance > settings.maxRooms) ||
+        isGloballyUnsafeRoom(remoteName) ||
+        (remoteMemory.unsafeUntil && Game.time < remoteMemory.unsafeUntil) ||
+        (remoteMemory.scoutRetryUntil && Game.time < remoteMemory.scoutRetryUntil)) { return false; }
+    if(Game.rooms[remoteName]) { return false; }
+    // Old economic exclusions are observations, not permanent scouting bans.
+    return !remoteMemory.lastScouted || Game.time - remoteMemory.lastScouted >= settings.staleRoomTicks;
 }
 
 function canUseRemote(room, remoteName, remoteMemory, settings) {
+    if(settings.enabled === false || !room.controller || room.controller.level < settings.minHomeRcl) { return false; }
     if(!isAccessibleRemoteMapRoom(room.name, remoteName)) {
         return false;
     }
@@ -668,9 +682,6 @@ function canUseRemote(room, remoteName, remoteMemory, settings) {
         return false;
     }
 
-    if(remoteMemory.exitAccessible === false) {
-        return false;
-    }
 
     if(remoteMemory.enabled === false) {
         return false;
@@ -790,7 +801,8 @@ function getRemoteExplorationBlockers(room, remoteName, remoteMemory, settings) 
     }
 
     if((remoteMemory.status == 'ready' || remoteMemory.status == 'unknown') &&
-        isPersistentRemoteBlockReason(remoteMemory.reason)) {
+        isPersistentRemoteBlockReason(remoteMemory.reason) &&
+        !(room && needsRemoteScout(room, remoteName, remoteMemory, settings))) {
         blockers.push('remembered ' + remoteMemory.reason);
     }
 
@@ -817,6 +829,10 @@ function copySharedRemoteMemory(room, remoteName, sourceMemory) {
             'status',
             'reason',
             'sourceIds',
+            'controllerOwner',
+            'hasController',
+            'sourceHarvestSlots',
+            'harvestSlots',
             'reservationUsername',
             'reservationTicks',
             'reservationObservedTick',
@@ -833,6 +849,12 @@ function copySharedRemoteMemory(room, remoteName, sourceMemory) {
             }
             else if(key == 'sourceIds' && sourceMemory.sourceIds) {
                 memory.sourceIds = sourceMemory.sourceIds.slice();
+            }
+            else if(key == 'sourceHarvestSlots' && sourceMemory.sourceHarvestSlots) {
+                memory.sourceHarvestSlots = {};
+                for(var sourceId in sourceMemory.sourceHarvestSlots) {
+                    memory.sourceHarvestSlots[sourceId] = sourceMemory.sourceHarvestSlots[sourceId];
+                }
             }
             else {
                 memory[key] = sourceMemory[key];
@@ -952,6 +974,9 @@ function getRoomReportLine(roomName, remoteName, remoteMemory) {
     var status = remoteMemory.status || 'unknown';
     var visible = Game.rooms[remoteName] ? 'visible' : 'unseen';
     var sources = remoteMemory.sourceIds ? remoteMemory.sourceIds.length : '?';
+    var slots = remoteMemory.harvestSlots || (remoteMemory.sourceIds ? remoteMemory.sourceIds.length : '?');
+    var assignedSlots = '?';
+    var unassignedMiners = countUnassignedRemoteMiners(remoteName);
     var distance = remoteMemory.distance === undefined ? '?' : remoteMemory.distance;
     var mapStatus = remoteMemory.mapStatus ? ' map=' + remoteMemory.mapStatus : '';
     var reserve = ' reserve=' +
@@ -971,12 +996,29 @@ function getRoomReportLine(roomName, remoteName, remoteMemory) {
     var blockers = settings ? getRemoteExplorationBlockers(homeRoom, remoteName, remoteMemory, settings) : ['remote memory missing'];
     var decision = blockers.length ? ' blockedBy=' + blockers.join(', ') : ' eligible';
 
+    if(remoteMemory.sourceIds && remoteMemory.sourceIds.length) {
+        assignedSlots = 0;
+        for(var i = 0; i < remoteMemory.sourceIds.length; i++) {
+            var sourceId = remoteMemory.sourceIds[i];
+            var sourceCapacity = getRemoteSourceHarvestCapacity(remoteMemory, sourceId);
+            assignedSlots += Math.min(
+                countRemoteCreeps(null, 'remoteMiner', remoteName, sourceId),
+                sourceCapacity
+            );
+        }
+    }
+
     return roomName + ' -> ' + remoteName +
         ' status=' + status +
         ' ' + visible +
         mapStatus +
         ' dist=' + distance +
+        ' scout=' + (homeRoom && needsRemoteScout(homeRoom, remoteName, remoteMemory, settings) ? 'due' : 'not-due') +
+        (remoteMemory.scoutRetryUntil > Game.time ? ' retryIn=' + (remoteMemory.scoutRetryUntil - Game.time) : '') +
+        (remoteMemory.scoutFailure ? ' lastScoutFailure=' + remoteMemory.scoutFailure : '') +
         ' sources=' + sources +
+        ' slots=' + assignedSlots + '/' + slots +
+        (unassignedMiners ? ' unassignedMiners=' + unassignedMiners : '') +
         reserve +
         unsafe +
         reason +
@@ -1044,7 +1086,9 @@ function countRemoteCreeps(homeRoomName, role, remoteRoomName, sourceId) {
     for(var name in Game.creeps) {
         var creep = Game.creeps[name];
         if(creep.memory.role != role ||
-            creep.memory.targetRoom != remoteRoomName) {
+            creep.memory.targetRoom != remoteRoomName ||
+            ((role == 'remoteMiner' || role == 'remoteHauler' || role == 'reserver') &&
+                lifecycle.needsReplacement(creep, creep.memory.homeRoom, remoteRoomName))) {
             continue;
         }
 
@@ -1057,6 +1101,20 @@ function countRemoteCreeps(homeRoomName, role, remoteRoomName, sourceId) {
         }
 
         count++;
+    }
+
+    return count;
+}
+
+function countUnassignedRemoteMiners(remoteRoomName) {
+    var count = 0;
+    for(var name in Game.creeps) {
+        var creep = Game.creeps[name];
+        if(creep.memory.role == 'remoteMiner' &&
+            creep.memory.targetRoom == remoteRoomName &&
+            !creep.memory.sourceId) {
+            count++;
+        }
     }
 
     return count;
@@ -1122,6 +1180,32 @@ function isRemoteWorkable(homeRoomName, targetRoomName) {
     return isRemoteOpenForWork(homeRoom, targetRoomName, remoteMemory, settings);
 }
 
+function areRemoteExtractionSlotsFilled(homeRoomName, targetRoomName) {
+    var homeRoom = Game.rooms[homeRoomName];
+    if(!homeRoom || !targetRoomName) {
+        return false;
+    }
+
+    var settings = updateRemoteMemory(homeRoom);
+    var remoteMemory = settings.rooms[targetRoomName];
+    if(!remoteMemory ||
+        remoteMemory.status != 'ready' ||
+        !remoteMemory.sourceIds ||
+        remoteMemory.sourceIds.length === 0) {
+        return false;
+    }
+
+    for(var i = 0; i < remoteMemory.sourceIds.length; i++) {
+        var sourceId = remoteMemory.sourceIds[i];
+        if(countRemoteCreeps(null, 'remoteMiner', targetRoomName, sourceId) <
+            getRemoteSourceHarvestCapacity(remoteMemory, sourceId)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 function needsRemoteReservation(room, remoteName, remoteMemory, settings) {
     if(!remoteMemory || !settings || !canUseRemote(room, remoteName, remoteMemory, settings)) {
         return false;
@@ -1153,26 +1237,31 @@ function needsRemoteReservation(room, remoteName, remoteMemory, settings) {
 }
 
 function needsRemoteScout(room, remoteName, remoteMemory, settings) {
-    if(!remoteMemory || !canScoutRoom(room, remoteName, remoteMemory, settings)) {
-        return false;
-    }
-
-    return remoteMemory.status == 'unknown' ||
-        !remoteMemory.sourceIds ||
-        remoteMemory.sourceIds.length === 0;
+    return !!remoteMemory && canScoutRoom(room, remoteName, remoteMemory, settings);
 }
 
-function makeScoutSpawnRequest(homeRoomName, remoteName) {
-    return {
-        role: 'scout',
-        bodyType: 'scout',
-        memory: {
-            role: 'scout',
-            homeRoom: homeRoomName,
-            targetRoom: remoteName,
-            working: false
-        }
-    };
+function getScoutSpawnRequest(room) {
+    var settings = updateRemoteMemory(room);
+    if(settings.enabled === false || !room.controller || room.controller.level < settings.minHomeRcl) { return null; }
+    var scouts = 0;
+    for(var name in Game.creeps) {
+        var creep = Game.creeps[name];
+        if(creep.memory.role == 'scout' && creep.memory.homeRoom == room.name) { scouts++; }
+    }
+    if(scouts >= settings.maxScouts || room._scoutSpawnRequestedTick === Game.time) { return null; }
+    var target = getScoutTarget(room.name, null);
+    return target ? {role: 'scout', bodyType: 'scout', memory: {role: 'scout', homeRoom: room.name, targetRoom: target}} : null;
+}
+
+function failScoutTarget(homeRoomName, roomName, reason) {
+    var home = Game.rooms[homeRoomName];
+    if(!home || !roomName) { return; }
+    var settings = getSettings(home);
+    var record = settings.rooms[roomName];
+    if(record) {
+        record.scoutRetryUntil = Game.time + settings.scoutRetryTicks;
+        record.scoutFailure = reason;
+    }
 }
 
 function makeReserverSpawnRequest(homeRoomName, remoteName) {
@@ -1222,9 +1311,12 @@ function needsRemoteClaim(room, remoteName, remoteMemory, settings) {
     }
 
     var remoteRoom = Game.rooms[remoteName];
-    if(!remoteRoom || !remoteRoom.controller) {
-        return false;
+    if(!remoteRoom) {
+        return remoteMemory.hasController === true && !remoteMemory.controllerOwner &&
+            remoteMemory.lastScouted !== undefined &&
+            Game.time - remoteMemory.lastScouted <= settings.staleRoomTicks;
     }
+    if(!remoteRoom.controller) { return false; }
 
     if(remoteRoom.controller.my || remoteRoom.controller.owner) {
         return false;
@@ -1258,6 +1350,7 @@ function getClaimerTarget(homeRoomName, currentTargetRoom) {
     }
 
     var settings = updateRemoteMemory(homeRoom);
+    if(settings.enabled === false) { return null; }
     if(currentTargetRoom &&
         settings.rooms[currentTargetRoom] &&
         needsRemoteClaim(homeRoom, currentTargetRoom, settings.rooms[currentTargetRoom], settings)) {
@@ -1275,7 +1368,7 @@ function getClaimerTarget(homeRoomName, currentTargetRoom) {
     return null;
 }
 
-function getScoutTarget(homeRoomName, currentTargetRoom) {
+function getDiscoveryTarget(homeRoomName, currentTargetRoom) {
     var homeRoom = Game.rooms[homeRoomName];
     if(!homeRoom) {
         return null;
@@ -1308,12 +1401,17 @@ function getScoutTarget(homeRoomName, currentTargetRoom) {
 
     for(var i = 0; i < allRooms.length; i++) {
         if(needsRemoteScout(homeRoom, allRooms[i].name, allRooms[i].memory, settings) &&
+            countRemoteCreeps(null, 'remoteMiner', allRooms[i].name) === 0 &&
             countRemoteCreeps(null, 'scout', allRooms[i].name) === 0) {
             return allRooms[i].name;
         }
     }
 
     return null;
+}
+
+function getScoutTarget(homeRoomName, currentTargetRoom) {
+    return getDiscoveryTarget(homeRoomName, currentTargetRoom);
 }
 
 function getReserverTarget(homeRoomName, currentTargetRoom) {
@@ -1357,6 +1455,108 @@ function hasSourceContainer(sourceId) {
     }).length > 0;
 }
 
+function isWalkableSourceSlot(room, pos) {
+    if(pos.x <= 0 || pos.x >= 49 || pos.y <= 0 || pos.y >= 49) {
+        return false;
+    }
+
+    if(room.getTerrain().get(pos.x, pos.y) == TERRAIN_MASK_WALL) {
+        return false;
+    }
+
+    var structures = pos.lookFor(LOOK_STRUCTURES);
+    for(var i = 0; i < structures.length; i++) {
+        var type = structures[i].structureType;
+        if(type != STRUCTURE_ROAD &&
+            type != STRUCTURE_CONTAINER &&
+            type != STRUCTURE_RAMPART) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function countSourceHarvestSlots(source) {
+    var slots = 0;
+    for(var dx = -1; dx <= 1; dx++) {
+        for(var dy = -1; dy <= 1; dy++) {
+            if(dx === 0 && dy === 0) {
+                continue;
+            }
+
+            var pos = new RoomPosition(
+                source.pos.x + dx,
+                source.pos.y + dy,
+                source.pos.roomName
+            );
+
+            if(isWalkableSourceSlot(source.room, pos)) {
+                slots++;
+            }
+        }
+    }
+
+    return Math.max(slots, 1);
+}
+
+function rememberRemoteHarvestSlots(remoteMemory, sources) {
+    var slotsBySource = {};
+    var totalSlots = 0;
+
+    for(var i = 0; i < sources.length; i++) {
+        var slots = countSourceHarvestSlots(sources[i]);
+        slotsBySource[sources[i].id] = slots;
+        totalSlots += slots;
+    }
+
+    remoteMemory.sourceHarvestSlots = slotsBySource;
+    remoteMemory.harvestSlots = totalSlots;
+}
+
+function getRemoteSourceHarvestCapacity(remoteMemory, sourceId) {
+    if(remoteMemory &&
+        remoteMemory.sourceHarvestSlots &&
+        remoteMemory.sourceHarvestSlots[sourceId]) {
+        return Math.max(remoteMemory.sourceHarvestSlots[sourceId], 1);
+    }
+
+    return 1;
+}
+
+function countRemoteMinerSlots(sourceIds, remoteMemory) {
+    var slots = 0;
+    for(var i = 0; i < sourceIds.length; i++) {
+        slots += getRemoteSourceHarvestCapacity(remoteMemory, sourceIds[i]);
+    }
+
+    return slots;
+}
+
+function countAssignedRemoteMinerSlots(remoteName, sourceIds, remoteMemory) {
+    var slots = 0;
+    for(var i = 0; i < sourceIds.length; i++) {
+        var sourceId = sourceIds[i];
+        slots += Math.min(
+            countRemoteCreeps(null, 'remoteMiner', remoteName, sourceId),
+            getRemoteSourceHarvestCapacity(remoteMemory, sourceId)
+        );
+    }
+
+    return slots;
+}
+
+function countMinedRemoteSources(remoteName, sourceIds) {
+    var minedSources = 0;
+    for(var i = 0; i < sourceIds.length; i++) {
+        if(countRemoteCreeps(null, 'remoteMiner', remoteName, sourceIds[i]) > 0) {
+            minedSources++;
+        }
+    }
+
+    return minedSources;
+}
+
 function countReadyRemoteMinerSources(sourceIds) {
     var readySources = 0;
 
@@ -1388,10 +1588,10 @@ function makeRemoteSpawnRequest(homeRoomName, remoteName, sourceId) {
     };
 }
 
-function makeRemoteHaulerSpawnRequest(homeRoomName, remoteName) {
+function makeRemoteHaulerSpawnRequest(homeRoomName, remoteName, smallBody) {
     return {
         role: 'remoteHauler',
-        bodyType: 'remoteHauler',
+        bodyType: smallBody ? 'remoteSmallHauler' : 'remoteHauler',
         memory: {
             role: 'remoteHauler',
             homeRoom: homeRoomName,
@@ -1479,6 +1679,114 @@ function getRemoteEnergyAmount(remoteRoomName) {
     return energy;
 }
 
+function getDesiredRemoteHaulers(remoteName, sourceIds, remoteMemory, energy) {
+    var readyMinerSources = countReadyRemoteMinerSources(sourceIds);
+    var minedSources = countMinedRemoteSources(remoteName, sourceIds);
+    var assignedSlots = countAssignedRemoteMinerSlots(remoteName, sourceIds, remoteMemory);
+    var distance = remoteMemory && remoteMemory.distance ? remoteMemory.distance : 1;
+    var distanceMultiplier = distance > 1 ? 1.5 : 1;
+    var desiredHaulers = Math.ceil(assignedSlots * distanceMultiplier / 2);
+
+    if(energy >= 100 && minedSources > 0) {
+        desiredHaulers = Math.max(desiredHaulers, 1);
+    }
+
+    if(readyMinerSources > 0) {
+        desiredHaulers = Math.max(desiredHaulers, readyMinerSources);
+    }
+
+    if(energy >= 600) {
+        desiredHaulers = Math.max(desiredHaulers, Math.ceil(energy / 1200));
+    }
+
+    return desiredHaulers;
+}
+
+function getRemoteHaulerNeed(room, remote, settings) {
+    var sourceIds = remote.memory.sourceIds || [];
+    var readyMinerSources = countReadyRemoteMinerSources(sourceIds);
+    var energy = getRemoteEnergyAmount(remote.name);
+    var desiredHaulers = getDesiredRemoteHaulers(remote.name, sourceIds, remote.memory, energy);
+    var haulers = countRemoteCreeps(null, 'remoteHauler', remote.name);
+    var assignedSlots = countAssignedRemoteMinerSlots(remote.name, sourceIds, remote.memory);
+
+    if(needsRemoteScout(room, remote.name, remote.memory, settings) ||
+        !isRemoteOpenForWork(room, remote.name, remote.memory, settings) ||
+        desiredHaulers <= 0 ||
+        energy < Math.min(settings.minHaulEnergy, 100) ||
+        haulers >= desiredHaulers) {
+        return null;
+    }
+
+    return {
+        remote: remote,
+        sourceIds: sourceIds,
+        readyMinerSources: readyMinerSources,
+        assignedSlots: assignedSlots,
+        energy: energy,
+        desiredHaulers: desiredHaulers,
+        haulers: haulers
+    };
+}
+
+function shouldSpawnSmallRemoteHauler(room, need) {
+    return room.energyAvailable < REMOTE_FULL_HAULER_COST ||
+        need.haulers < Math.ceil(need.desiredHaulers / 2);
+}
+
+function makeRemoteHaulerDecision(room, need) {
+    var smallBody = shouldSpawnSmallRemoteHauler(room, need);
+    return {
+        request: makeRemoteHaulerSpawnRequest(room.name, need.remote.name, smallBody),
+        reasons: [],
+        detail: need.remote.name + ': haulers ' + need.haulers + '/' + need.desiredHaulers +
+            ' for ' + need.assignedSlots + ' assigned slot(s), ' +
+            need.readyMinerSources + ' ready source(s), energy=' + need.energy +
+            (smallBody ? ', using small hauler' : '')
+    };
+}
+
+function getRemoteHaulerSpawnDecision(room, settings, rooms) {
+    var bestNeed = null;
+    var bestScore = -999999;
+
+    for(var i = 0; i < rooms.length; i++) {
+        var need = getRemoteHaulerNeed(room, rooms[i], settings);
+        if(!need) {
+            continue;
+        }
+
+        var deficit = need.desiredHaulers - need.haulers;
+        var score = deficit * 10000 +
+            need.energy +
+            need.assignedSlots * 100 -
+            ((rooms[i].spawnDistance || rooms[i].memory.distance || 1) * 25);
+
+        if(score > bestScore) {
+            bestNeed = need;
+            bestScore = score;
+        }
+    }
+
+    return bestNeed ? makeRemoteHaulerDecision(room, bestNeed) : null;
+}
+
+function getRemoteMinerCountForSource(remoteName, sourceId, pendingMiners) {
+    var assigned = countRemoteCreeps(null, 'remoteMiner', remoteName, sourceId);
+    var pendingForSource = Math.min(Math.max(1 - assigned, 0), pendingMiners.count);
+    pendingMiners.count -= pendingForSource;
+
+    return assigned + pendingForSource;
+}
+
+function getRemoteMinerSlotCountForSource(remoteName, sourceId, sourceCapacity, pendingMiners) {
+    var assigned = countRemoteCreeps(null, 'remoteMiner', remoteName, sourceId);
+    var pendingForSource = Math.min(Math.max(sourceCapacity - assigned, 0), pendingMiners.count);
+    pendingMiners.count -= pendingForSource;
+
+    return assigned + pendingForSource;
+}
+
 function getRemoteSpawnDecision(room, settings) {
     var reasons = [];
     var homeBlockers = getHomeExplorationBlockers(room, room ? room.memory : null, settings);
@@ -1489,45 +1797,35 @@ function getRemoteSpawnDecision(room, settings) {
         };
     }
 
-    for(var scoutRoomName in settings.rooms) {
-        var scoutMem = settings.rooms[scoutRoomName];
-        if(!canUseRemote(room, scoutRoomName, scoutMem, settings) &&
-            needsRemoteScout(room, scoutRoomName, scoutMem, settings) &&
-            countRemoteCreeps(null, 'scout', scoutRoomName) === 0) {
-            return {
-                request: makeScoutSpawnRequest(room.name, scoutRoomName),
-                reasons: [],
-                detail: scoutRoomName + ': scout re-verification needed after hostile'
-            };
-        }
-    }
-
     var rooms = getActiveRemoteRooms(room);
     if(!rooms.length) {
         return {
-            request: null,
+            request: getScoutSpawnRequest(room),
             reasons: ['no active eligible remote rooms']
         };
+    }
+
+    var haulerDecision = getRemoteHaulerSpawnDecision(room, settings, rooms);
+    if(haulerDecision) {
+        return haulerDecision;
     }
 
     for(var i = 0; i < rooms.length; i++) {
         var remote = rooms[i];
         var sourceIds = remote.memory.sourceIds || [];
         var readyMinerSources = countReadyRemoteMinerSources(sourceIds);
-        var desiredHaulers = readyMinerSources * REMOTE_HAULERS_PER_MINER;
+        var desiredMinerSlots = countRemoteMinerSlots(sourceIds, remote.memory);
         var energy = getRemoteEnergyAmount(remote.name);
-        var haulers = countRemoteCreeps(null, 'remoteHauler', remote.name);
+        var haulerNeed = getRemoteHaulerNeed(room, remote, settings);
+        var desiredHaulers = haulerNeed ?
+            haulerNeed.desiredHaulers :
+            getDesiredRemoteHaulers(remote.name, sourceIds, remote.memory, energy);
+        var haulers = haulerNeed ?
+            haulerNeed.haulers :
+            countRemoteCreeps(null, 'remoteHauler', remote.name);
 
         if(needsRemoteScout(room, remote.name, remote.memory, settings)) {
-            if(countRemoteCreeps(null, 'scout', remote.name) === 0) {
-                return {
-                    request: makeScoutSpawnRequest(room.name, remote.name),
-                    reasons: [],
-                    detail: remote.name + ': scout/source discovery needed'
-                };
-            }
-
-            reasons.push(remote.name + ': scout already assigned');
+            reasons.push(remote.name + ': remote miner discovery pending');
             continue;
         }
 
@@ -1562,32 +1860,49 @@ function getRemoteSpawnDecision(room, settings) {
             continue;
         }
 
-        if(desiredHaulers > 0 &&
-            energy >= settings.minHaulEnergy &&
-            haulers < desiredHaulers) {
-            return {
-                request: makeRemoteHaulerSpawnRequest(room.name, remote.name),
-                reasons: [],
-                detail: remote.name + ': haulers ' + haulers + '/' + desiredHaulers +
-                    ' for ' + readyMinerSources + ' ready miner source(s)'
-            };
+        var pendingMiners = countUnassignedRemoteMiners(remote.name);
+        var pendingSourceMiners = {
+            count: pendingMiners
+        };
+
+        for(var bootstrapIndex = 0; bootstrapIndex < sourceIds.length; bootstrapIndex++) {
+            var bootstrapSourceId = sourceIds[bootstrapIndex];
+            if(getRemoteMinerCountForSource(remote.name, bootstrapSourceId, pendingSourceMiners) < 1) {
+                return {
+                    request: makeRemoteSpawnRequest(room.name, remote.name, bootstrapSourceId),
+                    reasons: [],
+                    detail: remote.name + ': bootstrap miner needed for source ' + bootstrapSourceId
+                };
+            }
         }
 
         var missingMiner = false;
+        var pendingSlotMiners = {
+            count: pendingSourceMiners.count
+        };
         for(var sourceIndex = 0; sourceIndex < sourceIds.length; sourceIndex++) {
-            if(countRemoteCreeps(null, 'remoteMiner', remote.name, sourceIds[sourceIndex]) === 0) {
+            var sourceCapacity = getRemoteSourceHarvestCapacity(remote.memory, sourceIds[sourceIndex]);
+            var effectiveSourceMiners = getRemoteMinerSlotCountForSource(
+                remote.name,
+                sourceIds[sourceIndex],
+                sourceCapacity,
+                pendingSlotMiners
+            );
+
+            if(effectiveSourceMiners < sourceCapacity) {
                 missingMiner = true;
                 return {
                     request: makeRemoteSpawnRequest(room.name, remote.name, sourceIds[sourceIndex]),
                     reasons: [],
-                    detail: remote.name + ': missing miner for source ' + sourceIds[sourceIndex]
+                    detail: remote.name + ': miners ' + effectiveSourceMiners + '/' + sourceCapacity +
+                        ' for source ' + sourceIds[sourceIndex]
                 };
             }
         }
 
         var roomReasons = [];
         if(!missingMiner) {
-            roomReasons.push('all source miners assigned (' + sourceIds.length + ')');
+            roomReasons.push('all source miner slots assigned (' + desiredMinerSlots + ')');
         }
 
         if(desiredHaulers === 0) {
@@ -1624,6 +1939,9 @@ function getRemoteSpawnDecision(room, settings) {
 
         reasons.push(remote.name + ': ' + roomReasons.join('; '));
     }
+
+    var scoutRequest = getScoutSpawnRequest(room);
+    if(scoutRequest) { return {request: scoutRequest, reasons: [], detail: 'dedicated reconnaissance'}; }
 
     return {
         request: null,
@@ -1767,6 +2085,30 @@ function findTowerDeliveryTargetInRoom(creep, room) {
     return getClosestByApproxRange(creep.pos, towers);
 }
 
+function isSourceContainer(structure) {
+    return structure.structureType == STRUCTURE_CONTAINER &&
+        structure.pos.findInRange(FIND_SOURCES, 1).length > 0;
+}
+
+function isControllerContainer(structure) {
+    return structure.structureType == STRUCTURE_CONTAINER &&
+        structure.room.controller &&
+        structure.pos.getRangeTo(structure.room.controller) <= 3 &&
+        !isSourceContainer(structure);
+}
+
+function findControllerContainerDeliveryTargetInRoom(creep, room) {
+    var containers = room.find(FIND_STRUCTURES, {
+        filter: function(structure) {
+            return isControllerContainer(structure) &&
+                structure.store &&
+                structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
+        }
+    });
+
+    return getClosestByApproxRange(creep.pos, containers);
+}
+
 function findClosestDeliveryTarget(creep, finder) {
     var rooms = getOwnedRooms();
     var best = null;
@@ -1794,6 +2136,9 @@ function findHomeDeliveryTarget(creep) {
     }) ||
         findClosestDeliveryTarget(creep, function(room) {
             return findTowerDeliveryTargetInRoom(creep, room);
+        }) ||
+        findClosestDeliveryTarget(creep, function(room) {
+            return findControllerContainerDeliveryTargetInRoom(creep, room);
         }) ||
         findClosestDeliveryTarget(creep, function(room) {
             return findDeliveryTargetInRoom(creep, room, [STRUCTURE_STORAGE, STRUCTURE_TERMINAL]);
@@ -1871,12 +2216,17 @@ function findRemoteEnergyTarget(creep, homeRoomName, preferredRoomName) {
         return null;
     }
 
-    var rooms = getActiveRemoteRooms(homeRoom);
-    if(preferredRoomName) {
-        rooms = rooms.filter(function(remote) {
-            return remote.name == preferredRoomName;
-        });
+    var rooms;
+    if(preferredRoomName && settings.rooms && settings.rooms[preferredRoomName]) {
+        rooms = [{
+            name: preferredRoomName,
+            memory: settings.rooms[preferredRoomName]
+        }];
     }
+    else {
+        rooms = getActiveRemoteRooms(homeRoom);
+    }
+
     var best = null;
     var bestScore = 999999;
 
@@ -1891,9 +2241,13 @@ function findRemoteEnergyTarget(creep, homeRoomName, preferredRoomName) {
 
         var containers = remoteRoom.find(FIND_STRUCTURES, {
             filter: function(structure) {
+                var minimumEnergy = rooms[i].name == preferredRoomName ?
+                    1 :
+                    Math.min(100, creep.store.getFreeCapacity(RESOURCE_ENERGY));
+
                 return structure.structureType == STRUCTURE_CONTAINER &&
                     structure.store &&
-                    structure.store[RESOURCE_ENERGY] >= Math.min(100, creep.store.getFreeCapacity(RESOURCE_ENERGY));
+                    structure.store[RESOURCE_ENERGY] >= minimumEnergy;
             }
         });
 
@@ -1907,8 +2261,12 @@ function findRemoteEnergyTarget(creep, homeRoomName, preferredRoomName) {
 
         var dropped = remoteRoom.find(FIND_DROPPED_RESOURCES, {
             filter: function(resource) {
+                var minimumAmount = rooms[i].name == preferredRoomName ?
+                    1 :
+                    Math.min(100, creep.store.getFreeCapacity(RESOURCE_ENERGY));
+
                 return resource.resourceType == RESOURCE_ENERGY &&
-                    resource.amount >= Math.min(100, creep.store.getFreeCapacity(RESOURCE_ENERGY));
+                    resource.amount >= minimumAmount;
             }
         });
 
@@ -1932,11 +2290,21 @@ function withdrawOrPickup(creep, target) {
     if(target.resourceType) {
         var pickupResult = creep.pickup(target);
         if(pickupResult == ERR_NOT_IN_RANGE) {
-            creepUtils.moveTo(creep, target, '#ffaa00', 'remote haul', 'move:remotePickup');
+            creepUtils.moveTo(
+                creep,
+                target,
+                '#ffaa00',
+                'remote haul',
+                'move:remotePickup',
+                getRemoteTravelOptions(creep.memory.homeRoom || creep.room.name, target.pos.roomName)
+            );
             return true;
         }
 
         if(pickupResult == OK) {
+            if(creep.store.getFreeCapacity(RESOURCE_ENERGY) <= 0) {
+                creep.memory.working = true;
+            }
             creepUtils.announceIntent(creep, 'action:remotePickup', 'pickup');
             return true;
         }
@@ -1946,11 +2314,21 @@ function withdrawOrPickup(creep, target) {
 
     var withdrawResult = creep.withdraw(target, RESOURCE_ENERGY);
     if(withdrawResult == ERR_NOT_IN_RANGE) {
-        creepUtils.moveTo(creep, target, '#ffaa00', 'remote haul', 'move:remoteWithdraw');
+        creepUtils.moveTo(
+            creep,
+            target,
+            '#ffaa00',
+            'remote haul',
+            'move:remoteWithdraw',
+            getRemoteTravelOptions(creep.memory.homeRoom || creep.room.name, target.pos.roomName)
+        );
         return true;
     }
 
     if(withdrawResult == OK) {
+        if(creep.store.getFreeCapacity(RESOURCE_ENERGY) <= 0) {
+            creep.memory.working = true;
+        }
         creepUtils.announceIntent(creep, 'action:remoteWithdraw', 'haul');
         return true;
     }
@@ -1981,13 +2359,19 @@ module.exports = {
     deliverHome: deliverHome,
     findRemoteEnergyTarget: findRemoteEnergyTarget,
     getClaimerTarget: getClaimerTarget,
+    getDiscoveryTarget: getDiscoveryTarget,
     getReserverTarget: getReserverTarget,
     getScoutTarget: getScoutTarget,
+    getScoutSpawnRequest: getScoutSpawnRequest,
+    failScoutTarget: failScoutTarget,
     getSettings: getSettings,
     getReport: getReport,
     getSpawnRequest: getSpawnRequest,
+    getRemoteEnergyAmount: getRemoteEnergyAmount,
     hasHostileTower: hasHostileTower,
     hasThreats: hasThreats,
+    areRemoteExtractionSlotsFilled: areRemoteExtractionSlotsFilled,
+    getRemoteSourceHarvestCapacity: getRemoteSourceHarvestCapacity,
     isRemoteWorkable: isRemoteWorkable,
     isRemoteScoutable: isRemoteScoutable,
     isRemoteUsable: isRemoteUsable,

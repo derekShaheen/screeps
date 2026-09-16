@@ -69,7 +69,7 @@ var DEFAULT_ROOM_MEMORY = {
     remote: {
         enabled: true,
         maxRooms: 2,
-        minHomeRcl: 3,
+        minHomeRcl: 2,
         claimMinHomeRcl: 6,
         minHaulEnergy: 300,
         staleRoomTicks: 1500,
@@ -298,65 +298,59 @@ function initializeConsoleHelpers() {
     };
 }
 
+function runSafely(label, action) {
+    try { action(); }
+    catch(error) {
+        if(!Memory.runtimeErrors) { Memory.runtimeErrors = {}; }
+        var previous = Memory.runtimeErrors[label];
+        var loggedTick = previous && previous.loggedTick;
+        if(loggedTick === undefined || Game.time - loggedTick >= 25) {
+            console.log('[Creepworks] ' + label + ': ' + (error.stack || error));
+            loggedTick = Game.time;
+        }
+        Memory.runtimeErrors[label] = {tick: Game.time, loggedTick: loggedTick, message: String(error)};
+    }
+}
+
+function hasOptionalCpu() {
+    if(!Game.cpu || !Game.cpu.getUsed) { return true; }
+    var budget = Math.min(Game.cpu.tickLimit - 5, Game.cpu.limit * 0.85);
+    return Game.cpu.getUsed() < budget && Game.cpu.bucket >= 1000;
+}
+
 module.exports.loop = function () {
     debug.initialize();
     initializeConsoleHelpers();
     cleanupCreepMemory();
     cleanupInvalidRoomMemory();
-
+    var owned = [];
     for(var roomName in Game.rooms) {
         if(isOwnedRoom(Game.rooms[roomName])) {
-            initializeRoomMemory(Game.rooms[roomName]);
+            var room = Game.rooms[roomName];
+            owned.push(room);
+            runSafely('initialize:' + room.name, function() { initializeRoomMemory(room); });
         }
     }
-
-    for(var towerRoomName in Game.rooms) {
-        if(isOwnedRoom(Game.rooms[towerRoomName])) {
-            towerManager.run(Game.rooms[towerRoomName]);
-        }
-    }
-
-    for(var linkRoomName in Game.rooms) {
-        if(isOwnedRoom(Game.rooms[linkRoomName])) {
-            linkManager.run(Game.rooms[linkRoomName]);
-        }
-    }
-
-    for(var labRoomName in Game.rooms) {
-        if(isOwnedRoom(Game.rooms[labRoomName])) {
-            labManager.run(Game.rooms[labRoomName]);
-        }
-    }
-
-    for(var marketRoomName in Game.rooms) {
-        if(isOwnedRoom(Game.rooms[marketRoomName])) {
-            marketManager.run(Game.rooms[marketRoomName]);
-        }
-    }
-
-    for(var remoteRoomName in Game.rooms) {
-        if(isOwnedRoom(Game.rooms[remoteRoomName])) {
-            remoteManager.run(Game.rooms[remoteRoomName]);
-        }
-    }
-
-    for(var constructionRoomName in Game.rooms) {
-        if(isOwnedRoom(Game.rooms[constructionRoomName])) {
-            constructionManager.run(Game.rooms[constructionRoomName]);
-        }
-    }
-
-    for(var spawnName in Game.spawns) {
-        spawnManager.run(Game.spawns[spawnName]);
-    }
-
-    for(var creepName in Game.creeps) {
-        runCreep(Game.creeps[creepName]);
-    }
-
-    for(var uiRoomName in Game.rooms) {
-        if(isOwnedRoom(Game.rooms[uiRoomName])) {
-            uiManager.run(Game.rooms[uiRoomName]);
-        }
+    owned.forEach(function(room) {
+        runSafely('towers:' + room.name, function() { towerManager.run(room); });
+        runSafely('links:' + room.name, function() { linkManager.run(room); });
+        runSafely('remote:' + room.name, function() { remoteManager.run(room); });
+    });
+    Object.keys(Game.spawns).forEach(function(name) {
+        runSafely('spawn:' + name, function() { spawnManager.run(Game.spawns[name]); });
+    });
+    Object.keys(Game.creeps).forEach(function(name) {
+        runSafely('creep:' + name, function() { runCreep(Game.creeps[name]); });
+    });
+    owned.forEach(function(room) {
+        if(hasOptionalCpu()) { runSafely('construction:' + room.name, function() { constructionManager.run(room); }); }
+        if(hasOptionalCpu()) { runSafely('labs:' + room.name, function() { labManager.run(room); }); }
+        if(hasOptionalCpu()) { runSafely('market:' + room.name, function() { marketManager.run(room); }); }
+        if(hasOptionalCpu()) { runSafely('ui:' + room.name, function() { uiManager.run(room); }); }
+    });
+    if(Game.time % 100 === 0 && Memory.runtimeErrors) {
+        Object.keys(Memory.runtimeErrors).forEach(function(key) {
+            if(Game.time - Memory.runtimeErrors[key].tick > 1500) { delete Memory.runtimeErrors[key]; }
+        });
     }
 };

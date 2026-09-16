@@ -1,4 +1,5 @@
 var creepUtils = require('utils.creep');
+var debug = require('utils.debug');
 var remoteManager = require('manager.remote');
 
 function getRoomCenter(roomName) {
@@ -21,8 +22,8 @@ function getHomeFallback(creep) {
 }
 
 function retreatHome(creep) {
-    if(creep.room.name == creep.memory.targetRoom) {
-        remoteManager.markUnsafe(creep.memory.homeRoom, creep.memory.targetRoom, 'hostile threat');
+    if(creep.room.name != creep.memory.homeRoom) {
+        remoteManager.markUnsafe(creep.memory.homeRoom, creep.room.name, 'hostile threat');
     }
     creepUtils.announceIntent(creep, 'action:remoteRetreat', 'retreat');
     creepUtils.moveTo(creep, getHomeFallback(creep), '#ff66cc', 'home', 'move:remoteRetreat');
@@ -30,13 +31,69 @@ function retreatHome(creep) {
 }
 
 function abortBlockedRemote(creep) {
+    debug.log(
+        'debugRoles',
+        creep.name + ' remote hauler returning home because ' +
+            creep.memory.targetRoom + ' is blocked or not workable',
+        3
+    );
     creepUtils.announceIntent(creep, 'action:remoteAbort', 'blocked');
     creepUtils.moveTo(creep, getHomeFallback(creep), '#ff66cc', 'blocked', 'move:remoteBlocked');
     return true;
 }
 
+function shouldAbortAssignedRemote(creep) {
+    if(!creep.memory.homeRoom || !creep.memory.targetRoom) {
+        return true;
+    }
+
+    if(!remoteManager.isRemoteWorkable(creep.memory.homeRoom, creep.memory.targetRoom)) {
+        return true;
+    }
+
+    var targetRoom = Game.rooms[creep.memory.targetRoom];
+    if(!targetRoom) {
+        return false;
+    }
+
+    return !remoteManager.canHarvestRemoteRoom(targetRoom);
+}
+
 function moveToRemoteRoom(creep) {
+    if(creep.room.name != creep.memory.targetRoom &&
+        Game.map &&
+        typeof Game.map.findExit == 'function') {
+        var exit = Game.map.findExit(creep.room, creep.memory.targetRoom);
+        if(exit >= 0) {
+            var exitPos = creep.pos.findClosestByPath(exit);
+            if(exitPos) {
+                creepUtils.moveTo(creep, exitPos, '#ffaa00', 'remote', 'move:remoteHaulExit');
+                return true;
+            }
+        }
+    }
+
     remoteManager.moveToRoom(creep, creep.memory.targetRoom, '#ffaa00', 'remote', 'move:remoteHaulRoom');
+    return true;
+}
+
+function moveToHomeRoom(creep) {
+    if(creep.room.name == creep.memory.homeRoom) {
+        return false;
+    }
+
+    if(Game.map && typeof Game.map.findExit == 'function') {
+        var exit = Game.map.findExit(creep.room, creep.memory.homeRoom);
+        if(exit >= 0) {
+            var exitPos = creep.pos.findClosestByPath(exit);
+            if(exitPos) {
+                creepUtils.moveTo(creep, exitPos, '#ffffff', 'home', 'move:remoteHaulHomeExit');
+                return true;
+            }
+        }
+    }
+
+    remoteManager.moveHome(creep, 'remoteHaulHome');
     return true;
 }
 
@@ -52,6 +109,73 @@ function idleAtHome(creep) {
 
     creepUtils.announceIntent(creep, 'action:idle', 'idle');
     return true;
+}
+
+function idleInRemote(creep) {
+    if(creep.room.name != creep.memory.targetRoom) {
+        return moveToRemoteRoom(creep);
+    }
+
+    debug.log(
+        'debugRoles',
+        creep.name + ' waiting in remote room ' + creep.memory.targetRoom + ' for haulable energy',
+        10
+    );
+    creepUtils.announceIntent(creep, 'action:remoteWaitEnergy', 'wait');
+    return true;
+}
+
+function rememberRemoteEnergyTarget(creep, target) {
+    if(!target || !target.id) {
+        delete creep.memory.remoteEnergyTargetId;
+        return;
+    }
+
+    creep.memory.remoteEnergyTargetId = target.id;
+}
+
+function getRememberedRemoteEnergyTarget(creep) {
+    if(!creep.memory.remoteEnergyTargetId) {
+        return null;
+    }
+
+    var target = Game.getObjectById(creep.memory.remoteEnergyTargetId);
+    if(!target ||
+        !target.pos ||
+        target.pos.roomName != creep.memory.targetRoom ||
+        (target.store && target.store[RESOURCE_ENERGY] <= 0) ||
+        (target.resourceType && target.amount <= 0)) {
+        delete creep.memory.remoteEnergyTargetId;
+        return null;
+    }
+
+    return target;
+}
+
+function findRemoteEnergyTarget(creep) {
+    var remembered = getRememberedRemoteEnergyTarget(creep);
+    if(remembered) {
+        return remembered;
+    }
+
+    var target = remoteManager.findRemoteEnergyTarget(creep, creep.memory.homeRoom, creep.memory.targetRoom);
+    if(!target) {
+        target = remoteManager.findRemoteEnergyTarget(creep, creep.memory.homeRoom, null);
+        if(target && target.pos && target.pos.roomName != creep.memory.targetRoom) {
+            debug.log(
+                'debugRoles',
+                creep.name + ' retargeting remote haul from ' +
+                    creep.memory.targetRoom + ' to ' + target.pos.roomName +
+                    ' for visible energy',
+                3
+            );
+            creep.memory.targetRoom = target.pos.roomName;
+            delete creep.memory.moveState;
+        }
+    }
+
+    rememberRemoteEnergyTarget(creep, target);
+    return target;
 }
 
 function hasOwnedSpawn(room) {
@@ -129,11 +253,7 @@ var roleRemoteHauler = {
             return retreatHome(creep);
         }
 
-        if(!remoteManager.isRemoteUsable(creep.memory.homeRoom, creep.memory.targetRoom)) {
-            return abortBlockedRemote(creep);
-        }
-
-        if(!remoteManager.isRemoteWorkable(creep.memory.homeRoom, creep.memory.targetRoom)) {
+        if(shouldAbortAssignedRemote(creep)) {
             return abortBlockedRemote(creep);
         }
 
@@ -144,6 +264,12 @@ var roleRemoteHauler = {
         creepUtils.updateWorkingState(creep, 'deliver', 'haul');
 
         if(creep.memory.working) {
+            delete creep.memory.remoteEnergyTargetId;
+
+            if(creep.room.name != creep.memory.homeRoom) {
+                return moveToHomeRoom(creep);
+            }
+
             if(isBootstrapTargetRoom(creep)) {
                 var bootstrapWorker = findBootstrapWorkerTarget(creep);
                 if(bootstrapWorker) {
@@ -160,7 +286,7 @@ var roleRemoteHauler = {
             return idleAtHome(creep);
         }
 
-        var target = remoteManager.findRemoteEnergyTarget(creep, creep.memory.homeRoom, creep.memory.targetRoom);
+        var target = findRemoteEnergyTarget(creep);
         if(target) {
             return remoteManager.withdrawOrPickup(creep, target);
         }
@@ -169,7 +295,7 @@ var roleRemoteHauler = {
             return moveToRemoteRoom(creep);
         }
 
-        return idleAtHome(creep);
+        return idleInRemote(creep);
     }
 };
 

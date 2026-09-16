@@ -1,3 +1,4 @@
+var lifecycle = require('utils.lifecycle');
 var debug = require('utils.debug');
 var defenseUtils = require('utils.defense');
 var remoteManager = require('manager.remote');
@@ -11,7 +12,7 @@ var BASE_TARGETS = {
     defender: 0
 };
 
-var ROLE_PRIORITY = ['harvester', 'transporter', 'upgrader', 'builder', 'defender', 'mineralHarvester'];
+var ROLE_PRIORITY = ['harvester', 'transporter', 'defender', 'upgrader', 'builder', 'mineralHarvester'];
 
 var BODIES = {
     claimer: [
@@ -77,6 +78,9 @@ var BODIES = {
         [CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE],
         [CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE]
     ],
+    remoteSmallHauler: [
+        [CARRY, CARRY, MOVE, MOVE]
+    ],
     defender: [
         [ATTACK, ATTACK, MOVE],
         [TOUGH, RANGED_ATTACK, MOVE, MOVE],
@@ -110,6 +114,7 @@ var LOW_STAFF_BODY_BUDGET = {
     remoteMiner: 700,
     remoteStarterMiner: 800,
     remoteHauler: 800,
+    remoteSmallHauler: 300,
     defender: 650,
     defenderHealer: 850
 };
@@ -126,6 +131,7 @@ var BODY_GROWTH = {
     remoteMiner: [WORK, MOVE],
     remoteStarterMiner: [WORK, CARRY, MOVE],
     remoteHauler: [CARRY, CARRY, MOVE, MOVE],
+    remoteSmallHauler: [],
     defender: [TOUGH, ATTACK, MOVE],
     defenderHealer: [TOUGH, HEAL, MOVE]
 };
@@ -300,6 +306,11 @@ function getStandardBodyBudget(room, role) {
 }
 
 function getSpawnBodyDecision(room, role, bodyType, counts, targets) {
+    if(role == 'scout') {
+        var scoutCost = BODYPART_COST[MOVE];
+        return {body: room.energyAvailable >= scoutCost ? [MOVE] : null,
+            desiredCost: scoutCost, recoverySpawn: false, lowStaffed: false};
+    }
     var recoverySpawn = shouldUseRecoveryBody(room, role, counts, targets);
     var lowStaffed = isLowStaffed(room, counts, targets);
     var shouldUseLowStaffBody = recoverySpawn ||
@@ -373,7 +384,7 @@ function countRoles(room) {
 
     for(var name in Game.creeps) {
         var creep = Game.creeps[name];
-        if(creep.room.name != room.name) {
+        if(creep.room.name != room.name || lifecycle.needsReplacement(creep, room.name, creep.memory.targetRoom)) {
             continue;
         }
 
@@ -425,21 +436,80 @@ function countActiveDefenseTowers(room) {
 function countSourceContainers(room) {
     var containers = room.find(FIND_STRUCTURES, {
         filter: function(structure) {
-            return structure.structureType == STRUCTURE_CONTAINER &&
-                structure.pos.findInRange(FIND_SOURCES, 1).length > 0;
+            return isSourceContainer(structure);
         }
     });
 
     return containers.length;
 }
 
+function isSourceContainer(structure) {
+    return structure.structureType == STRUCTURE_CONTAINER &&
+        structure.pos.findInRange(FIND_SOURCES, 1).length > 0;
+}
+
+function isControllerContainer(structure) {
+    return structure.structureType == STRUCTURE_CONTAINER &&
+        structure.room.controller &&
+        structure.pos.getRangeTo(structure.room.controller) <= 3 &&
+        !isSourceContainer(structure);
+}
+
 function countSourceContainerEnergy(room) {
     var energy = 0;
     var containers = room.find(FIND_STRUCTURES, {
         filter: function(structure) {
+            return isSourceContainer(structure) &&
+                structure.store;
+        }
+    });
+
+    for(var i = 0; i < containers.length; i++) {
+        energy += containers[i].store[RESOURCE_ENERGY];
+    }
+
+    return energy;
+}
+
+function countControllerContainerEnergy(room) {
+    var energy = 0;
+    var containers = room.find(FIND_STRUCTURES, {
+        filter: function(structure) {
+            return isControllerContainer(structure) &&
+                structure.store;
+        }
+    });
+
+    for(var i = 0; i < containers.length; i++) {
+        energy += containers[i].store[RESOURCE_ENERGY];
+    }
+
+    return energy;
+}
+
+function countControllerContainerFreeCapacity(room) {
+    var freeCapacity = 0;
+    var containers = room.find(FIND_STRUCTURES, {
+        filter: function(structure) {
+            return isControllerContainer(structure) &&
+                structure.store;
+        }
+    });
+
+    for(var i = 0; i < containers.length; i++) {
+        freeCapacity += containers[i].store.getFreeCapacity(RESOURCE_ENERGY);
+    }
+
+    return freeCapacity;
+}
+
+function countHaulableContainerEnergy(room) {
+    var energy = 0;
+    var containers = room.find(FIND_STRUCTURES, {
+        filter: function(structure) {
             return structure.structureType == STRUCTURE_CONTAINER &&
-                structure.store &&
-                structure.pos.findInRange(FIND_SOURCES, 1).length > 0;
+                !isControllerContainer(structure) &&
+                structure.store;
         }
     });
 
@@ -459,6 +529,62 @@ function countSourceContainerSites(room) {
     });
 
     return sites.length;
+}
+
+function isWalkableSourceSlot(room, pos) {
+    if(pos.x <= 0 || pos.x >= 49 || pos.y <= 0 || pos.y >= 49) {
+        return false;
+    }
+
+    if(room.getTerrain().get(pos.x, pos.y) == TERRAIN_MASK_WALL) {
+        return false;
+    }
+
+    var structures = pos.lookFor(LOOK_STRUCTURES);
+    for(var i = 0; i < structures.length; i++) {
+        var type = structures[i].structureType;
+        if(type != STRUCTURE_ROAD &&
+            type != STRUCTURE_CONTAINER &&
+            type != STRUCTURE_RAMPART) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function countSourceHarvestSlots(source) {
+    var slots = 0;
+    for(var dx = -1; dx <= 1; dx++) {
+        for(var dy = -1; dy <= 1; dy++) {
+            if(dx === 0 && dy === 0) {
+                continue;
+            }
+
+            var pos = new RoomPosition(
+                source.pos.x + dx,
+                source.pos.y + dy,
+                source.pos.roomName
+            );
+
+            if(isWalkableSourceSlot(source.room, pos)) {
+                slots++;
+            }
+        }
+    }
+
+    return slots;
+}
+
+function countRoomSourceHarvestSlots(room) {
+    var sources = room.find(FIND_SOURCES);
+    var slots = 0;
+
+    for(var i = 0; i < sources.length; i++) {
+        slots += Math.max(countSourceHarvestSlots(sources[i]), 1);
+    }
+
+    return slots;
 }
 
 function hasStoredEnergy(room) {
@@ -564,32 +690,33 @@ function getHostileUnitCount(room) {
 
 function scaleHarvesters(room, targets) {
     var sourceCount = room.find(FIND_SOURCES).length;
+    var harvestSlots = countRoomSourceHarvestSlots(room);
     var sourceContainers = countSourceContainers(room);
     var plannedSourceContainers = sourceContainers + countSourceContainerSites(room);
     var uncoveredSources = Math.max(0, sourceCount - plannedSourceContainers);
-    var desiredHarvesters = sourceCount;
+    var desiredHarvesters = harvestSlots;
 
     if(sourceContainers >= sourceCount) {
-        desiredHarvesters = sourceCount;
+        desiredHarvesters = harvestSlots;
     }
     else if(sourceContainers > 0 || plannedSourceContainers >= sourceCount) {
-        desiredHarvesters = sourceCount + Math.min(uncoveredSources, 1);
+        desiredHarvesters = harvestSlots + Math.min(uncoveredSources, 1);
     }
     else if(room.energyCapacityAvailable >= 550) {
-        desiredHarvesters = Math.min(sourceCount + 1, 4);
+        desiredHarvesters = Math.max(desiredHarvesters, Math.min(sourceCount + 1, 4));
     }
 
     if(sourceContainers === 0 &&
         room.energyCapacityAvailable >= 800 &&
         countStructures(room, STRUCTURE_EXTENSION) >= 5) {
-        desiredHarvesters = Math.min(sourceCount + 1, 4);
+        desiredHarvesters = Math.max(desiredHarvesters, Math.min(sourceCount + 1, 4));
     }
 
     if(sourceContainers === 0 &&
         room.controller &&
         room.controller.level >= 4 &&
         hasStoredEnergy(room)) {
-        desiredHarvesters = Math.min(sourceCount + 1, 4);
+        desiredHarvesters = Math.max(desiredHarvesters, Math.min(sourceCount + 1, 4));
     }
 
     targets.harvester = Math.max(targets.harvester, desiredHarvesters);
@@ -599,16 +726,22 @@ function scaleTransporters(room, targets) {
     var sourceContainers = countSourceContainers(room);
     var hasStorage = countStructures(room, STRUCTURE_STORAGE) > 0;
     var sourceContainerEnergy = countSourceContainerEnergy(room);
+    var haulableContainerEnergy = countHaulableContainerEnergy(room);
+    var controllerContainerEnergy = countControllerContainerEnergy(room);
+    var controllerContainerFreeCapacity = countControllerContainerFreeCapacity(room);
     var storedEnergy = getStorageEnergy(room);
     var desiredTransporters = targets.transporter;
 
-    if(sourceContainers > 0 || hasStorage) {
+    if(sourceContainers > 0 || haulableContainerEnergy > 0 || hasStorage) {
         desiredTransporters = Math.max(desiredTransporters, 1);
     }
 
-    if(sourceContainers >= 2 &&
-        room.energyCapacityAvailable >= 800 &&
-        sourceContainerEnergy >= 300) {
+    if((sourceContainers >= 2 && sourceContainerEnergy >= 300) ||
+        haulableContainerEnergy >= 300) {
+        desiredTransporters = Math.max(desiredTransporters, 2);
+    }
+
+    if(haulableContainerEnergy >= 500 && controllerContainerFreeCapacity >= 100) {
         desiredTransporters = Math.max(desiredTransporters, 2);
     }
 
@@ -621,6 +754,19 @@ function scaleTransporters(room, targets) {
     }
 
     if(room.memory.defenseMode && countStructures(room, STRUCTURE_TOWER) > 0) {
+        desiredTransporters = Math.max(desiredTransporters, 2);
+    }
+
+    if(haulableContainerEnergy >= 1200 &&
+        controllerContainerFreeCapacity >= 500 &&
+        room.energyCapacityAvailable >= 800) {
+        desiredTransporters = Math.max(desiredTransporters, 3);
+    }
+
+    if(controllerContainerEnergy === 0 &&
+        controllerContainerFreeCapacity > 0 &&
+        haulableContainerEnergy >= 300 &&
+        room.energyCapacityAvailable >= 300) {
         desiredTransporters = Math.max(desiredTransporters, 2);
     }
 
@@ -764,6 +910,11 @@ function getSpawnRole(counts, targets) {
         return 'harvester';
     }
 
+    if(counts.transporter < targets.transporter &&
+        counts.harvester >= Math.min(targets.harvester, 2)) {
+        return 'transporter';
+    }
+
     for(var i = 0; i < ROLE_PRIORITY.length; i++) {
         var role = ROLE_PRIORITY[i];
         if(counts[role] < targets[role]) {
@@ -841,7 +992,7 @@ function spawnRole(spawn, role, counts, targets, request) {
         return;
     }
 
-    var name = makeCreepName(role);
+    var name = makeCreepName(role) + '_' + spawn.name;
     var memory = {
         role: role,
         working: false
@@ -861,6 +1012,7 @@ function spawnRole(spawn, role, counts, targets, request) {
     });
 
     if(result == OK) {
+        if(role == 'scout') { spawn.room._scoutSpawnRequestedTick = Game.time; }
         debug.log(
             'debugSpawn',
             spawn.name + ' spawning ' + name +
@@ -896,6 +1048,14 @@ var spawnManager = {
         var targets = getTargets(spawn.room, counts);
         logTargetChanges(spawn.room, targets);
         var role = getSpawnRole(counts, targets);
+        // Reconnaissance may precede optional growth, never economy recovery or defense.
+        if(counts.harvester >= Math.min(targets.harvester, 2) &&
+            counts.transporter >= Math.min(targets.transporter, 1) &&
+            counts.defender >= targets.defender &&
+            role != 'defender') {
+            var scoutRequest = remoteManager.getScoutSpawnRequest(spawn.room);
+            if(scoutRequest) { spawnRole(spawn, 'scout', counts, targets, scoutRequest); return; }
+        }
 
         if(!role) {
             var remoteRequest = remoteManager.getSpawnRequest(spawn.room);

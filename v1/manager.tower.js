@@ -321,7 +321,7 @@ var towerManager = {
             if(repairTarget) {
                 room.memory.towerRepairTargetId = repairTarget.id;
                 tower.repair(repairTarget);
-                debug.log('debugDefense', tower.id + ' repairing ' + repairTarget.structureType, 10);
+                debug.log('debugDefense', tower.id + ' repairing ' + repairTarget.structureType, 100);
             }
         }
     }

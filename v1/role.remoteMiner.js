@@ -1,3 +1,4 @@
+var lifecycle = require('utils.lifecycle');
 var creepUtils = require('utils.creep');
 var debug = require('utils.debug');
 var remoteManager = require('manager.remote');
@@ -26,8 +27,8 @@ function getHomeFallback(creep) {
 }
 
 function retreatHome(creep, reason) {
-    if(creep.room.name == creep.memory.targetRoom) {
-        remoteManager.markUnsafe(creep.memory.homeRoom, creep.memory.targetRoom, reason || 'hostile threat');
+    if(creep.room.name != creep.memory.homeRoom) {
+        remoteManager.markUnsafe(creep.memory.homeRoom, creep.room.name, reason || 'hostile threat');
     }
     creepUtils.announceIntent(creep, 'action:remoteRetreat', 'retreat');
     creepUtils.moveTo(creep, getHomeFallback(creep), '#ff66cc', 'home', 'move:remoteRetreat');
@@ -36,6 +37,7 @@ function retreatHome(creep, reason) {
 
 function abortBlockedRemote(creep) {
     delete creep.memory.sourceId;
+    clearHarvestSlot(creep);
     creepUtils.announceIntent(creep, 'action:remoteAbort', 'blocked');
     creepUtils.moveTo(creep, getHomeFallback(creep), '#ff66cc', 'blocked', 'move:remoteBlocked');
     return true;
@@ -58,6 +60,7 @@ function convertToHomeHarvester(creep, reason) {
     delete creep.memory.sourceId;
     delete creep.memory.containerSourceId;
     delete creep.memory.harvestSourceId;
+    clearHarvestSlot(creep);
     delete creep.memory.moveState;
 
     debug.log(
@@ -76,6 +79,7 @@ function workAtHomeAfterBlocked(creep, reason) {
     var homeRoom = Game.rooms[creep.memory.homeRoom];
     if(!homeRoom || creep.room.name != homeRoom.name) {
         delete creep.memory.sourceId;
+        clearHarvestSlot(creep);
         creepUtils.announceIntent(creep, 'action:remoteAbort', 'blocked');
         creepUtils.moveTo(creep, getHomeFallback(creep), '#ff66cc', 'blocked', 'move:remoteBlocked');
         return true;
@@ -130,11 +134,148 @@ function canBuildRemoteInfrastructure(creep) {
     return creep.room.controller.reservation.username == getOwnedUsername(creep);
 }
 
+function getRemoteMemory(creep) {
+    var homeRoom = Game.rooms[creep.memory.homeRoom];
+    if(!homeRoom) {
+        return null;
+    }
+
+    var settings = remoteManager.getSettings(homeRoom);
+    return settings.rooms ? settings.rooms[creep.memory.targetRoom] : null;
+}
+
+function countAssignedRemoteMiners(room, sourceId, selfName) {
+    var count = 0;
+    for(var name in Game.creeps) {
+        var other = Game.creeps[name];
+        if(other.name == selfName ||
+            lifecycle.needsReplacement(other, other.memory.homeRoom, other.memory.targetRoom)) {
+            continue;
+        }
+
+        if(other.memory.role == 'remoteMiner' &&
+            other.memory.targetRoom == room.name &&
+            other.memory.sourceId == sourceId) {
+            count++;
+        }
+    }
+
+    return count;
+}
+
+function clearHarvestSlot(creep) {
+    delete creep.memory.remoteHarvestSlot;
+}
+
+function getSourceCapacity(creep, source) {
+    return remoteManager.getRemoteSourceHarvestCapacity(getRemoteMemory(creep), source.id);
+}
+
+function getSourceAssignmentInfo(creep, source) {
+    var capacity = getSourceCapacity(creep, source);
+    var assigned = countAssignedRemoteMiners(creep.room, source.id, creep.name);
+    return {
+        source: source,
+        capacity: capacity,
+        assigned: assigned,
+        hasOpenSlot: assigned < capacity,
+        hasEnergy: source.energy > 0
+    };
+}
+
+function getSourceAssignmentCandidates(creep) {
+    var sources = creep.room.find(FIND_SOURCES);
+    if(!sources.length) {
+        return [];
+    }
+
+    var candidates = [];
+    for(var i = 0; i < sources.length; i++) {
+        var info = getSourceAssignmentInfo(creep, sources[i]);
+        if(info.hasOpenSlot) {
+            candidates.push(info);
+        }
+    }
+
+    candidates.sort(function(a, b) {
+        if(a.hasEnergy != b.hasEnergy) {
+            return a.hasEnergy ? -1 : 1;
+        }
+
+        var pressureDiff = (a.assigned / a.capacity) - (b.assigned / b.capacity);
+        if(pressureDiff !== 0) {
+            return pressureDiff;
+        }
+
+        var assignmentDiff = a.assigned - b.assigned;
+        if(assignmentDiff !== 0) {
+            return assignmentDiff;
+        }
+
+        var regenA = typeof a.source.ticksToRegeneration == 'number' ? a.source.ticksToRegeneration : 9999;
+        var regenB = typeof b.source.ticksToRegeneration == 'number' ? b.source.ticksToRegeneration : 9999;
+        if(regenA != regenB) {
+            return regenA - regenB;
+        }
+
+        return creep.pos.getRangeTo(a.source) - creep.pos.getRangeTo(b.source);
+    });
+
+    return candidates;
+}
+
+function getBestAvailableSource(creep, excludedSourceId, requireEnergy) {
+    var candidates = getSourceAssignmentCandidates(creep);
+    for(var i = 0; i < candidates.length; i++) {
+        if(candidates[i].source.id != excludedSourceId && candidates[i].hasEnergy) {
+            return candidates[i].source;
+        }
+    }
+
+    if(requireEnergy) {
+        return null;
+    }
+
+    for(var j = 0; j < candidates.length; j++) {
+        if(candidates[j].source.id != excludedSourceId) {
+            return candidates[j].source;
+        }
+    }
+
+    return null;
+}
+
+function assignSource(creep, source) {
+    creep.memory.sourceId = source.id;
+    clearHarvestSlot(creep);
+    return source;
+}
+
 function chooseSource(creep) {
     if(creep.memory.sourceId) {
         var remembered = Game.getObjectById(creep.memory.sourceId);
         if(remembered) {
-            return remembered;
+            var assigned = countAssignedRemoteMiners(creep.room, remembered.id, creep.name);
+            var hasRememberedSlot = creep.memory.remoteHarvestSlot &&
+                creep.memory.remoteHarvestSlot.sourceId == remembered.id;
+
+            if(remembered.energy === 0 &&
+                creep.store[RESOURCE_ENERGY] === 0) {
+                var replacement = getBestAvailableSource(creep, remembered.id, true);
+                if(replacement) {
+                    debug.log(
+                        'debugRoles',
+                        creep.name + ' reassigning from depleted remote source ' +
+                            formatPos(remembered.pos) + ' to ' + formatPos(replacement.pos),
+                        5
+                    );
+                    return assignSource(creep, replacement);
+                }
+            }
+
+            if(assigned < getSourceCapacity(creep, remembered) || hasRememberedSlot) {
+                return remembered;
+            }
         }
 
         if(creep.room.name != creep.memory.targetRoom) {
@@ -142,19 +283,44 @@ function chooseSource(creep) {
         }
 
         delete creep.memory.sourceId;
+        clearHarvestSlot(creep);
     }
 
-    var sources = creep.room.find(FIND_SOURCES);
-    if(!sources.length) {
+    var source = getBestAvailableSource(creep, null, false);
+    if(!source) {
         return null;
     }
 
-    sources.sort(function(a, b) {
-        return creep.pos.getRangeTo(a) - creep.pos.getRangeTo(b);
-    });
+    return assignSource(creep, source);
+}
 
-    creep.memory.sourceId = sources[0].id;
-    return sources[0];
+function reassignFromDepletedSource(creep, source) {
+    if(creep.store[RESOURCE_ENERGY] > 0) {
+        return false;
+    }
+
+    var replacement = getBestAvailableSource(creep, source.id, true);
+    if(!replacement) {
+        return false;
+    }
+
+    debug.log(
+        'debugRoles',
+        creep.name + ' moving from empty remote source ' +
+            formatPos(source.pos) + ' to ' + formatPos(replacement.pos),
+        5
+    );
+    assignSource(creep, replacement);
+    return true;
+}
+
+function handleSaturatedRemote(creep) {
+    if(!remoteManager.areRemoteExtractionSlotsFilled(creep.memory.homeRoom, creep.memory.targetRoom)) {
+        return false;
+    }
+
+    creepUtils.announceIntent(creep, 'action:remoteIdle', 'idle');
+    return remoteManager.moveHome(creep, 'remoteIdle');
 }
 
 function getSourceContainer(source) {
@@ -169,6 +335,153 @@ function getSourceContainer(source) {
     });
 
     return containers[0] || null;
+}
+
+function isWalkableHarvestPosition(room, pos) {
+    if(pos.x <= 0 || pos.x >= 49 || pos.y <= 0 || pos.y >= 49) {
+        return false;
+    }
+
+    if(room.getTerrain().get(pos.x, pos.y) == TERRAIN_MASK_WALL) {
+        return false;
+    }
+
+    var structures = pos.lookFor(LOOK_STRUCTURES);
+    for(var i = 0; i < structures.length; i++) {
+        var type = structures[i].structureType;
+        if(type != STRUCTURE_ROAD &&
+            type != STRUCTURE_CONTAINER &&
+            type != STRUCTURE_RAMPART) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function getHarvestPositions(source) {
+    var positions = [];
+    for(var dx = -1; dx <= 1; dx++) {
+        for(var dy = -1; dy <= 1; dy++) {
+            if(dx === 0 && dy === 0) {
+                continue;
+            }
+
+            var pos = new RoomPosition(source.pos.x + dx, source.pos.y + dy, source.pos.roomName);
+            if(isWalkableHarvestPosition(source.room, pos)) {
+                positions.push(pos);
+            }
+        }
+    }
+
+    return positions;
+}
+
+function isOccupiedByOther(creep, pos) {
+    var creeps = pos.lookFor(LOOK_CREEPS);
+    for(var i = 0; i < creeps.length; i++) {
+        if(creeps[i].name != creep.name) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function isHarvestSlotClaimedByOther(creep, source, pos) {
+    for(var name in Game.creeps) {
+        var other = Game.creeps[name];
+        if(other.name == creep.name ||
+            other.memory.role != 'remoteMiner' ||
+            other.memory.targetRoom != creep.memory.targetRoom ||
+            other.memory.sourceId != source.id ||
+            !other.memory.remoteHarvestSlot) {
+            continue;
+        }
+
+        var slot = other.memory.remoteHarvestSlot;
+        if(slot.sourceId == source.id &&
+            slot.x == pos.x &&
+            slot.y == pos.y &&
+            slot.roomName == pos.roomName) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function rememberHarvestSlot(creep, source, pos) {
+    creep.memory.remoteHarvestSlot = {
+        sourceId: source.id,
+        x: pos.x,
+        y: pos.y,
+        roomName: pos.roomName
+    };
+}
+
+function getRememberedHarvestSlot(creep, source) {
+    var slot = creep.memory.remoteHarvestSlot;
+    if(!slot || slot.sourceId != source.id || slot.roomName != source.pos.roomName) {
+        return null;
+    }
+
+    var pos = new RoomPosition(slot.x, slot.y, slot.roomName);
+    if(!isWalkableHarvestPosition(source.room, pos) ||
+        isOccupiedByOther(creep, pos) ||
+        isHarvestSlotClaimedByOther(creep, source, pos)) {
+        clearHarvestSlot(creep);
+        return null;
+    }
+
+    return pos;
+}
+
+function chooseHarvestPosition(creep, source, preferredPos) {
+    var remembered = getRememberedHarvestSlot(creep, source);
+    if(remembered) {
+        return remembered;
+    }
+
+    var positions = getHarvestPositions(source);
+    var candidates = [];
+
+    for(var i = 0; i < positions.length; i++) {
+        if(isOccupiedByOther(creep, positions[i]) ||
+            isHarvestSlotClaimedByOther(creep, source, positions[i])) {
+            continue;
+        }
+
+        candidates.push(positions[i]);
+    }
+
+    if(!candidates.length) {
+        if(creep.pos.inRangeTo(source, 1) &&
+            isWalkableHarvestPosition(source.room, creep.pos) &&
+            !isHarvestSlotClaimedByOther(creep, source, creep.pos)) {
+            rememberHarvestSlot(creep, source, creep.pos);
+            return creep.pos;
+        }
+
+        return null;
+    }
+
+    candidates.sort(function(a, b) {
+        var aPreferred = preferredPos && a.isEqualTo(preferredPos) ? -100 : 0;
+        var bPreferred = preferredPos && b.isEqualTo(preferredPos) ? -100 : 0;
+        var aCurrent = a.isEqualTo(creep.pos) ? -50 : 0;
+        var bCurrent = b.isEqualTo(creep.pos) ? -50 : 0;
+        var scoreDiff = (aPreferred + aCurrent + creep.pos.getRangeTo(a)) -
+            (bPreferred + bCurrent + creep.pos.getRangeTo(b));
+        if(scoreDiff !== 0) {
+            return scoreDiff;
+        }
+
+        return a.x - b.x || a.y - b.y;
+    });
+
+    rememberHarvestSlot(creep, source, candidates[0]);
+    return candidates[0];
 }
 
 function getContainerSite(source) {
@@ -273,8 +586,14 @@ function buildContainerSite(creep, source, site) {
         return false;
     }
 
-    if(!creep.pos.inRangeTo(source, 1)) {
-        creepUtils.moveTo(creep, source, '#ffaa00', 'build box', 'move:remoteBox');
+    var harvestPos = chooseHarvestPosition(creep, source, site.pos);
+    if(!harvestPos) {
+        creepUtils.announceIntent(creep, 'action:remoteWaitSlot', 'wait');
+        return true;
+    }
+
+    if(!creep.pos.isEqualTo(harvestPos)) {
+        creepUtils.moveTo(creep, harvestPos, '#ffaa00', 'build box', 'move:remoteBox');
         return true;
     }
 
@@ -286,6 +605,10 @@ function buildContainerSite(creep, source, site) {
         }
 
         if(harvestResult == ERR_NOT_ENOUGH_RESOURCES) {
+            if(reassignFromDepletedSource(creep, source)) {
+                return true;
+            }
+
             return waitForSourceRegen(creep, source);
         }
 
@@ -304,7 +627,7 @@ function buildContainerSite(creep, source, site) {
     }
 
     if(buildResult == ERR_NOT_IN_RANGE) {
-        creepUtils.moveTo(creep, source, '#ffaa00', 'build box', 'move:remoteBox');
+        creepUtils.moveTo(creep, harvestPos, '#ffaa00', 'build box', 'move:remoteBox');
         return true;
     }
 
@@ -317,7 +640,11 @@ function buildContainerSite(creep, source, site) {
 }
 
 function mineToContainer(creep, source, container) {
-    if(creep.store[RESOURCE_ENERGY] > 0 && container.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
+    var harvestPos = chooseHarvestPosition(creep, source, container.pos);
+
+    if(creep.store[RESOURCE_ENERGY] > 0 &&
+        creep.pos.inRangeTo(container, 1) &&
+        container.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
         var transferResult = creep.transfer(container, RESOURCE_ENERGY);
         if(transferResult == ERR_NOT_IN_RANGE) {
             creepUtils.moveTo(creep, container, '#ffaa00', 'fill box', 'move:remoteBox');
@@ -330,17 +657,17 @@ function mineToContainer(creep, source, container) {
         }
     }
 
-    if(!creep.pos.inRangeTo(source, 1)) {
-        creepUtils.moveTo(creep, container, '#ffaa00', 'go mine', 'move:remoteMine');
+    if(!harvestPos) {
+        creepUtils.announceIntent(creep, 'action:remoteWaitSlot', 'wait');
         return true;
     }
 
-    if(!creep.pos.isEqualTo(container.pos) && container.pos.lookFor(LOOK_CREEPS).length === 0) {
-        creepUtils.moveTo(creep, container, '#ffaa00', 'mine box', 'move:remoteBox');
+    if(!creep.pos.isEqualTo(harvestPos)) {
+        creepUtils.moveTo(creep, harvestPos, '#ffaa00', 'go mine', 'move:remoteMine');
         return true;
     }
 
-    if(creep.store.getFreeCapacity(RESOURCE_ENERGY) === 0 && container.store.getFreeCapacity(RESOURCE_ENERGY) === 0) {
+    if(creep.store.getFreeCapacity(RESOURCE_ENERGY) === 0) {
         creep.drop(RESOURCE_ENERGY);
         creepUtils.announceIntent(creep, 'action:remoteDrop', 'drop');
         return true;
@@ -358,6 +685,10 @@ function mineToContainer(creep, source, container) {
     }
 
     if(harvestResult == ERR_NOT_ENOUGH_RESOURCES) {
+        if(reassignFromDepletedSource(creep, source)) {
+            return true;
+        }
+
         return waitForSourceRegen(creep, source);
     }
 
@@ -407,8 +738,14 @@ function mineLoose(creep, source) {
         return remoteManager.deliverHome(creep);
     }
 
-    if(!creep.pos.inRangeTo(source, 1)) {
-        creepUtils.moveTo(creep, source, '#ffaa00', 'go mine', 'move:remoteMine');
+    var harvestPos = chooseHarvestPosition(creep, source, null);
+    if(!harvestPos) {
+        creepUtils.announceIntent(creep, 'action:remoteWaitSlot', 'wait');
+        return true;
+    }
+
+    if(!creep.pos.isEqualTo(harvestPos)) {
+        creepUtils.moveTo(creep, harvestPos, '#ffaa00', 'go mine', 'move:remoteMine');
         return true;
     }
 
@@ -419,6 +756,10 @@ function mineLoose(creep, source) {
     }
 
     if(result == ERR_NOT_ENOUGH_RESOURCES) {
+        if(reassignFromDepletedSource(creep, source)) {
+            return true;
+        }
+
         return waitForSourceRegen(creep, source);
     }
 
@@ -471,8 +812,16 @@ var roleRemoteMiner = {
             return workAtHomeAfterBlocked(creep, 'not harvestable');
         }
 
+        if(!creep.memory.sourceId && handleSaturatedRemote(creep)) {
+            return true;
+        }
+
         var source = chooseSource(creep);
         if(!source) {
+            if(handleSaturatedRemote(creep)) {
+                return true;
+            }
+
             return retreatHome(creep, 'no sources');
         }
 

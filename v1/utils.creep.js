@@ -6,6 +6,7 @@ function announceIntent(creep, key, message) {
     }
 
     if(creep.memory.intentKey == key) {
+        creep.memory.intentTick = Game.time;
         return;
     }
 
@@ -259,6 +260,58 @@ function findStepAsidePosition(creep, target) {
     return candidates[0];
 }
 
+// Translate room-route policy into the tile pathfinder's supported cost callback.
+var blockedTravelCosts = null;
+function routedMoveOptions(creep, target, extraOptions) {
+    if(!extraOptions || !extraOptions.routeCallback) { return extraOptions || {}; }
+    var options = {};
+    for(var key in extraOptions) {
+        if(key != 'routeCallback') { options[key] = extraOptions[key]; }
+    }
+    var pos = getMoveTargetPos(target);
+    if(!pos || pos.roomName == creep.room.name) { return options; }
+    var policy = extraOptions.routeCallback;
+    var cached = creep.memory.remoteRoute;
+    var valid = cached && cached.from == creep.room.name && cached.to == pos.roomName &&
+        Game.time - cached.tick < 25 && !getStuckTicks(creep);
+    if(valid) {
+        var from = cached.from;
+        for(var i = 0; i < cached.rooms.length; i++) {
+            if(policy(cached.rooms[i], from) === Infinity) { valid = false; break; }
+            from = cached.rooms[i];
+        }
+    }
+    if(!valid) {
+        delete creep.memory._move;
+        var route = Game.map.findRoute(creep.room.name, pos.roomName, {routeCallback: policy});
+        if(!Array.isArray(route) || !route.length || route.length >= 64) {
+            delete creep.memory.remoteRoute;
+            return null;
+        }
+        cached = {from: creep.room.name, to: pos.roomName, tick: Game.time,
+            rooms: route.map(function(step) { return step.room; })};
+        creep.memory.remoteRoute = cached;
+    }
+    var allowed = {};
+    allowed[creep.room.name] = true;
+    cached.rooms.forEach(function(name) { allowed[name] = true; });
+    var originalCallback = options.costCallback;
+    options.maxRooms = Math.min(64, cached.rooms.length + 1);
+    options.costCallback = function(roomName, costs) {
+        if(!allowed[roomName]) {
+            if(!blockedTravelCosts) {
+                blockedTravelCosts = new PathFinder.CostMatrix();
+                for(var x = 0; x < 50; x++) {
+                    for(var y = 0; y < 50; y++) { blockedTravelCosts.set(x, y, 255); }
+                }
+            }
+            return blockedTravelCosts;
+        }
+        return originalCallback ? originalCallback(roomName, costs) : costs;
+    };
+    return options;
+}
+
 function moveTo(creep, target, stroke, intentMessage, intentKey, extraOptions) {
     if(creep.memory.passThroughMovedTick == Game.time) {
         return OK;
@@ -272,6 +325,8 @@ function moveTo(creep, target, stroke, intentMessage, intentKey, extraOptions) {
         reusePath: 5
     };
 
+    extraOptions = routedMoveOptions(creep, target, extraOptions);
+    if(extraOptions === null) { return ERR_NO_PATH; }
     if(extraOptions) {
         for(var optionKey in extraOptions) {
             options[optionKey] = extraOptions[optionKey];
