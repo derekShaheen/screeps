@@ -95,8 +95,8 @@ test('expired foreign reservation can be scouted again',()=>{
   const m=e.load('manager.remote').exports;m.run(h);delete e.game.rooms[r.name];e.game.time+=2000;
   assert.equal(m.getScoutTarget(h.name,null),r.name);
 });
-test('unsafe cooldown prevents reentry but expiry permits cautious scouting',()=>{
-  const e=environment(),h=e.room('W1N1');h.memory.remote.rooms.W2N1={status:'unsafe',reason:'hostile tower',lastScouted:1,distance:1,unsafeUntil:5000};
+test('combat cooldown prevents reentry but expiry permits cautious scouting',()=>{
+  const e=environment(),h=e.room('W1N1');h.memory.remote.rooms.W2N1={status:'unsafe',reason:'combat hostile',lastScouted:1,distance:1,unsafeUntil:5000};
   const m=e.load('manager.remote').exports;assert.equal(m.getScoutTarget(h.name,null),null);e.game.time=5001;assert.equal(m.getScoutTarget(h.name,null),'W2N1');
 });
 test('separate parent connections have independent exit caches',()=>{
@@ -304,4 +304,62 @@ test('finishing retreat inside home cannot path through a neighboring hostile ro
   const e=environment(),h=e.room('W1N1'),c=scout(e,h);let options;
   e.overrides['utils.creep']={moveTo(c,p,s,i,k,o){options=o;return 0;}};
   e.load('manager.remote').exports.moveHome(c,'scoutRetreat');assert.equal(options.maxRooms,1);
+});
+
+test('W33S5 restores northern mining intel before unexplored diagonal rooms',()=>{
+  const e=environment(),h=e.room('W33S5'),m=e.load('manager.remote').exports;e.game.time=10000;h.controller.level=3;
+  for(const name of ['W32S6','W34S4','W34S5','W33S4'])addUnknown(e,h,name);
+  Object.assign(h.memory.remote.rooms.W33S4,{reason:'combat hostile',lastScouted:1,sourceIds:['north'],unsafeUntil:9999,unsafeAttempts:1});
+  h.memory.remote.rooms.W33S6={status:'unsafe',reason:'hostile tower',unsafeUntil:27656,distance:1};
+  const c=scout(e,h,'W32S6');
+  assert.equal(m.getScoutTarget(h.name,c.memory.targetRoom),'W33S4');
+  assert.equal(m.isRemoteUsable(h.name,'W33S4'),false);
+  const n=e.room('W33S4',false);e.game.time++;m.run(h);
+  assert.equal(m.isRemoteUsable(h.name,n.name),true);
+  assert.equal(m.getSpawnRequest(h).role,'remoteMiner');
+  assert.equal(m.getSpawnRequest(h).memory.targetRoom,n.name);
+});
+test('tower rooms stay excluded after cooldown expiry including priority flags',()=>{
+  const e=environment(),h=e.room('W33S5'),m=e.load('manager.remote').exports;e.game.time=10000;
+  h.memory.remote.rooms.W33S6={status:'unknown',reason:'hostile tower',lastScouted:1,distance:1,unsafeUntil:5000};
+  e.game.flags.Flag1={pos:new e.RoomPosition(25,25,'W33S6')};
+  assert.equal(m.getScoutTarget(h.name,'W33S6'),null);
+  const c=scout(e,h,'W33S6');e.game.map.findRoute=(from,to,o)=>{assert.equal(o.routeCallback(to,from),Infinity);return -2;};
+  c.moveTo=()=>{throw Error('must not enter tower room');};assert.equal(m.moveToRoom(c,'W33S6'),-2);
+});
+test('unknown directions precede old combat rooms without known sources',()=>{
+  const e=environment(),h=e.room('W33S5'),m=e.load('manager.remote').exports;
+  addUnknown(e,h,'W32S4');h.memory.remote.rooms.W32S4.reason='combat hostile';addUnknown(e,h,'W34S5');
+  assert.equal(m.getScoutTarget(h.name,'W32S4'),'W34S5');
+});
+test('equal-priority missions remain stable instead of changing direction every tick',()=>{
+  const e=environment(),h=e.room('W33S5'),m=e.load('manager.remote').exports;
+  addUnknown(e,h,'W32S4');addUnknown(e,h,'W34S5');const c=scout(e,h,'W34S5');
+  assert.equal(m.getScoutTarget(h.name,c.memory.targetRoom),'W34S5');
+});
+
+test('mining recovery never overrides an active combat cooldown',()=>{
+  const e=environment(),h=e.room('W33S5'),m=e.load('manager.remote').exports;
+  h.memory.remote.rooms.W33S4={status:'unknown',sourceIds:['north'],reason:'combat hostile',unsafeUntil:1000,distance:1};
+  addUnknown(e,h,'W34S5');assert.equal(m.getScoutTarget(h.name,'W33S4'),'W34S5');
+});
+test('unreachable mining recovery yields to another safe direction',()=>{
+  const e=environment(),h=e.room('W33S5'),m=e.load('manager.remote').exports;
+  h.memory.remote.rooms.W33S4={status:'unknown',sourceIds:['north'],reason:'combat hostile',distance:1};
+  addUnknown(e,h,'W34S5');e.game.map.findRoute=(from,to)=>to==='W33S4'?-2:[{room:to}];
+  assert.equal(m.getScoutTarget(h.name,null),'W34S5');assert.ok(h.memory.remote.rooms.W33S4.scoutRetryUntil>e.game.time);
+});
+test('independent safe vision clears an expired tower exclusion',()=>{
+  const e=environment(),h=e.room('W33S5'),m=e.load('manager.remote').exports;
+  h.memory.remote.rooms.W33S6={status:'unknown',reason:'hostile tower',unsafeUntil:99,distance:1};
+  e.memory.remote={unsafeRooms:{W33S6:{reason:'hostile tower',unsafeUntil:99,attempts:1}}};
+  e.room('W33S6',false);m.run(h);assert.equal(h.memory.remote.rooms.W33S6.reason,undefined);
+  delete e.game.rooms.W33S6;e.game.time+=1600;assert.equal(m.getScoutTarget(h.name,null),'W33S6');
+});
+test('report shows policy version, scout target and route, and permanent tower exclusion',()=>{
+  const e=environment(),h=e.room('W33S5'),m=e.load('manager.remote').exports,c=scout(e,h,'W33S4');
+  c.memory.remoteRoute={rooms:['W33S4']};h.memory.remote.rooms.W33S6={status:'unknown',reason:'hostile tower',unsafeUntil:99,distance:1};
+  const report=m.getReport(h.name);assert.match(report,/scoutPolicy=recover-mining-v1/);
+  assert.match(report,/scout scout room=W33S5 target=W33S4 retreat=false route=W33S4/);
+  assert.match(report,/hostile tower requires a fresh safe observation/);
 });

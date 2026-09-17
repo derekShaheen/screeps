@@ -65,3 +65,14 @@ Scouting assignments check for a safe room route before selecting a destination,
 Scouts finish retreating into their home-room interior before taking another mission. Cached movement is cleared when retreat begins and ends, and movement within home stays in that room.
 
 Validation: 46 simulated regression tests, including quiet observations, shared cooldowns, blocked transit, priority flags, replacement scouts, safe detours, cooldown expiry, and border retreat. The real game pathfinder and live combat remain unverified. Deploy the updated manager.remote.js and role.scout.js together using the normal project workflow; this fix does not upload server code or synchronize the AppData client scripts.
+
+
+## Recover productive remotes before new exploration (2026-09-17)
+
+The W33S5 report showed W33S4 awaiting reconnaissance after a combat encounter, with one remembered source, while alphabetical selection favored unexplored diagonal rooms. Discovery now prioritizes known source rooms eligible for recovery, then exploration without remembered combat threats, then other old combat rooms. Explicit priority flags still apply within safety constraints. Higher-priority work can replace an existing lower-priority mission; equal-priority missions remain stable. Active danger cooldowns and route failures continue to block recovery.
+
+Remembered hostile towers no longer become scout destinations or transit rooms merely because their cooldown expires. An independent safe observation after cooldown expiry clears that exclusion. No automatic scout is sent just to test whether a tower is gone.
+
+remoteReport() now includes scoutPolicy=recover-mining-v1 and each scout's current room, destination, retreat state, and cached room route. This distinguishes a hostile destination from an attempted transit route and identifies the running policy.
+
+Validation: 54 simulated tests pass, including the W33S5/W33S4 recovery scenario through a subsequent remote-miner spawn request at RCL 3. Project source only; deploy manager.remote.js with the previously updated role.scout.js. Live server code and Memory were not modified.

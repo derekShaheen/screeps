@@ -242,12 +242,18 @@ function isUnsafeVisibleRoom(room) {
     return !!room && (hasThreats(room) || hasHostileTower(room));
 }
 
+function hasRememberedHostileTower(remoteName, remoteMemory) {
+    var shared = getUnsafeRoomMemory()[remoteName];
+    return !!((remoteMemory && remoteMemory.reason == 'hostile tower') ||
+        (shared && shared.reason == 'hostile tower'));
+}
+
 function shouldAvoidTravelRoom(homeRoomName, roomName, destinationRoomName) {
     if(!roomName || roomName == homeRoomName) {
         return false;
     }
 
-    if(isGloballyUnsafeRoom(roomName)) {
+    if(isGloballyUnsafeRoom(roomName) || hasRememberedHostileTower(roomName)) {
         return true;
     }
 
@@ -263,7 +269,8 @@ function shouldAvoidTravelRoom(homeRoomName, roomName, destinationRoomName) {
 
     var settings = getSettings(homeRoom);
     var remoteMemory = settings.rooms && settings.rooms[roomName] ? settings.rooms[roomName] : null;
-    if(remoteMemory && remoteMemory.unsafeUntil > Game.time) { return true; }
+    if(hasRememberedHostileTower(roomName, remoteMemory) ||
+        (remoteMemory && remoteMemory.unsafeUntil > Game.time)) { return true; }
     // Expired danger may be revisited as a deliberate destination, never as transit.
     if(roomName == destinationRoomName) { return false; }
     return !!remoteMemory && (remoteMemory.status == 'unsafe' ||
@@ -673,6 +680,7 @@ function canScoutRoom(room, remoteName, remoteMemory, settings) {
         !isAccessibleRemoteMapRoom(room.name, remoteName) ||
         (remoteMemory.distance && remoteMemory.distance > settings.maxRooms) ||
         isGloballyUnsafeRoom(remoteName) ||
+        hasRememberedHostileTower(remoteName, remoteMemory) ||
         (remoteMemory.unsafeUntil && Game.time < remoteMemory.unsafeUntil) ||
         (remoteMemory.scoutRetryUntil && Game.time < remoteMemory.scoutRetryUntil)) { return false; }
     if(Game.rooms[remoteName]) { return false; }
@@ -789,6 +797,10 @@ function getRemoteExplorationBlockers(room, remoteName, remoteMemory, settings) 
 
     if(!mapAccessible) {
         blockers.push('map status ' + getMapRoomStatus(remoteName));
+    }
+
+    if(hasRememberedHostileTower(remoteName, remoteMemory)) {
+        blockers.push('hostile tower requires a fresh safe observation');
     }
 
     if(remoteMemory.exitAccessible === false) {
@@ -1072,9 +1084,19 @@ function getReport(homeRoomName, spawnManager) {
                 ' maxRooms=' + settings.maxRooms +
                 ' minHomeRcl=' + settings.minHomeRcl +
                 ' known=' + remoteNames.length +
+                ' scoutPolicy=recover-mining-v1' +
                 (homeBlockers.length ? ' blockedBy=' + homeBlockers.join(', ') : ' eligible')
         );
         lines.push(getRemoteSpawnReportLine(room, settings, spawnManager));
+        for(var creepName in Game.creeps) {
+            var scout = Game.creeps[creepName];
+            if(scout.memory.role != 'scout' || scout.memory.homeRoom != roomNames[i]) { continue; }
+            var route = scout.memory.remoteRoute;
+            lines.push('scout ' + creepName + ' room=' + (scout.room ? scout.room.name : '?') +
+                ' target=' + (scout.memory.targetRoom || 'none') +
+                ' retreat=' + !!scout.memory.scoutRetreat +
+                ' route=' + (route && route.rooms ? route.rooms.join(' -> ') : 'none'));
+        }
 
         if(!remoteNames.length) {
             lines.push(roomNames[i] + ' has not discovered adjacent rooms yet');
@@ -1384,6 +1406,19 @@ function hasScoutRoute(homeRoomName, fromRoomName, targetRoomName) {
     return false;
 }
 
+function getScoutPriority(remoteMemory) {
+    // Restore known mining first once its safety cooldown has expired.
+    // Foreign ownership/reservation is not a productive recovery target.
+    var username = getMyUsername();
+    var foreign = (remoteMemory.controllerOwner && remoteMemory.controllerOwner != username) ||
+        (remoteMemory.reservationUsername && remoteMemory.reservationUsername != username &&
+            getEstimatedReservationTicks(remoteMemory) > 0);
+    if(foreign) { return 3; }
+    if(remoteMemory.sourceIds && remoteMemory.sourceIds.length &&
+        (!remoteMemory.reason || remoteMemory.reason == 'combat hostile')) { return 0; }
+    return remoteMemory.reason == 'combat hostile' ? 2 : 1;
+}
+
 function getDiscoveryTarget(homeRoomName, currentTargetRoom, fromRoomName) {
     var homeRoom = Game.rooms[homeRoomName];
     if(!homeRoom) {
@@ -1391,12 +1426,6 @@ function getDiscoveryTarget(homeRoomName, currentTargetRoom, fromRoomName) {
     }
 
     var settings = updateRemoteMemory(homeRoom);
-    if(currentTargetRoom &&
-        settings.rooms[currentTargetRoom] &&
-        needsRemoteScout(homeRoom, currentTargetRoom, settings.rooms[currentTargetRoom], settings) &&
-        hasScoutRoute(homeRoomName, fromRoomName || homeRoomName, currentTargetRoom)) {
-        return currentTargetRoom;
-    }
 
     var allRooms = [];
     for(var remoteName in settings.rooms) {
@@ -1412,14 +1441,21 @@ function getDiscoveryTarget(homeRoomName, currentTargetRoom, fromRoomName) {
             return a.priorityFlag ? -1 : 1;
         }
 
+        var priority = getScoutPriority(a.memory) - getScoutPriority(b.memory);
+        if(priority) { return priority; }
+        // Keep an in-flight mission unless a more valuable category becomes due.
+        if((a.name == currentTargetRoom) != (b.name == currentTargetRoom)) {
+            return a.name == currentTargetRoom ? -1 : 1;
+        }
         return (a.memory.distance || 1) - (b.memory.distance || 1) ||
             a.name.localeCompare(b.name);
     });
 
     for(var i = 0; i < allRooms.length; i++) {
         if(needsRemoteScout(homeRoom, allRooms[i].name, allRooms[i].memory, settings) &&
-            countRemoteCreeps(null, 'remoteMiner', allRooms[i].name) === 0 &&
-            countRemoteCreeps(null, 'scout', allRooms[i].name) === 0 &&
+            (allRooms[i].name == currentTargetRoom ||
+                (countRemoteCreeps(null, 'remoteMiner', allRooms[i].name) === 0 &&
+                countRemoteCreeps(null, 'scout', allRooms[i].name) === 0)) &&
             hasScoutRoute(homeRoomName, fromRoomName || homeRoomName, allRooms[i].name)) {
             return allRooms[i].name;
         }
