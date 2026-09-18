@@ -359,7 +359,51 @@ test('independent safe vision clears an expired tower exclusion',()=>{
 test('report shows policy version, scout target and route, and permanent tower exclusion',()=>{
   const e=environment(),h=e.room('W33S5'),m=e.load('manager.remote').exports,c=scout(e,h,'W33S4');
   c.memory.remoteRoute={rooms:['W33S4']};h.memory.remote.rooms.W33S6={status:'unknown',reason:'hostile tower',unsafeUntil:99,distance:1};
-  const report=m.getReport(h.name);assert.match(report,/scoutPolicy=recover-mining-v1/);
+  const report=m.getReport(h.name);assert.match(report,/scoutPolicy=safe-exits-v2/);assert.match(report,/movementPolicy=safe-exits-v2/);
   assert.match(report,/scout scout room=W33S5 target=W33S4 retreat=false route=W33S4/);
   assert.match(report,/hostile tower requires a fresh safe observation/);
+});
+
+test('partial tile paths cannot approach the southern hostile exit while routed west',()=>{
+  const e=environment(),h=e.room('W33S5'),c=scout(e,h,'W32S6');let options;
+  e.game.map.describeExits=n=>n===h.name?{1:'W33S4',5:'W33S6',7:'W34S5'}:{};
+  e.game.map.findRoute=()=>[{room:'W34S5'},{room:'W32S6'}];
+  c.moveTo=(p,o)=>{options=o;return 0;};e.load('manager.remote').exports.moveToRoom(c,'W32S6');
+  const costs=options.costCallback(h.name,new e.PathFinder.CostMatrix());
+  assert.equal(costs.get(25,49),255);assert.equal(costs.get(25,0),255);
+  assert.equal(costs.get(0,25),0);
+});
+test('old cached routes are invalidated before using boundary-safe movement',()=>{
+  const e=environment(),h=e.room('W33S5'),c=scout(e,h,'W34S5');let routes=0;
+  c.memory.remoteRoute={from:h.name,to:'W34S5',tick:e.game.time,rooms:['W34S5']};c.memory._move={path:'old south path'};
+  e.game.map.findRoute=()=>{routes++;return [{room:'W34S5'}];};c.moveTo=()=>{assert.equal(c.memory._move,undefined);return 0;};
+  e.load('manager.remote').exports.moveToRoom(c,'W34S5');assert.equal(routes,1);
+});
+test('reported fourteen-room detour is rejected and a nearby direction is selected',()=>{
+  const e=environment(),h=e.room('W33S5'),m=e.load('manager.remote').exports;
+  addUnknown(e,h,'W32S6');addUnknown(e,h,'W34S5');
+  const route=['W34S5','W34S4','W34S3','W34S2','W34S1','W33S1','W33S2','W32S2','W31S2','W31S3','W31S4','W31S5','W31S6','W32S6'];
+  e.game.map.findRoute=(from,to)=>to==='W32S6'?route.map(room=>({room})):[{room:to}];
+  assert.equal(m.getScoutTarget(h.name,'W32S6'),'W34S5');
+  assert.match(h.memory.remote.rooms.W32S6.scoutFailure,/route/);
+});
+test('scout route policy excludes transit outside the exploration radius',()=>{
+  const e=environment(),h=e.room('W33S5'),m=e.load('manager.remote').exports;addUnknown(e,h,'W34S5');
+  e.game.map.getRoomLinearDistance=(from,to)=>to==='W34S2'?3:1;
+  e.game.map.findRoute=(from,to,o)=>{assert.equal(o.routeCallback('W34S2',from),Infinity);return [{room:to}];};
+  assert.equal(m.getScoutTarget(h.name,null),'W34S5');
+});
+
+test('movement also rejects excessive scout routes instead of relying on target selection',()=>{
+  const e=environment(),h=e.room('W33S5'),c=scout(e,h,'W32S6');
+  c.memory.remoteRoute={version:2,from:h.name,to:'W32S6',tick:e.game.time,rooms:Array(14).fill('W32S6')};
+  c.memory._move={path:'old path'};e.game.map.findRoute=()=>Array(14).fill({room:'W32S6'});
+  c.moveTo=()=>{throw Error('long route must not issue movement');};
+  assert.equal(e.load('manager.remote').exports.moveToRoom(c,'W32S6'),-2);
+  assert.equal(c.memory.remoteRoute,undefined);assert.equal(c.memory._move,undefined);
+});
+test('retreat may use a longer safe route to get home',()=>{
+  const e=environment(),h=e.room('W33S5'),r=e.room('W31S5',false),c=scout(e,h);c.room=r;c.pos=new e.RoomPosition(25,25,r.name);
+  e.game.map.findRoute=()=>['W31S4','W32S4','W32S3','W33S3','W33S4',h.name].map(room=>({room}));
+  let moved=false;c.moveTo=()=>{moved=true;return 0;};e.load('manager.remote').exports.moveHome(c,'scoutRetreat');assert.equal(moved,true);
 });

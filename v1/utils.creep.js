@@ -266,13 +266,15 @@ function routedMoveOptions(creep, target, extraOptions) {
     if(!extraOptions || !extraOptions.routeCallback) { return extraOptions || {}; }
     var options = {};
     for(var key in extraOptions) {
-        if(key != 'routeCallback') { options[key] = extraOptions[key]; }
+        if(key != 'routeCallback' && key != 'maxRouteRooms') { options[key] = extraOptions[key]; }
     }
     var pos = getMoveTargetPos(target);
     if(!pos || pos.roomName == creep.room.name) { return options; }
     var policy = extraOptions.routeCallback;
     var cached = creep.memory.remoteRoute;
-    var valid = cached && cached.from == creep.room.name && cached.to == pos.roomName &&
+    var routeLimit = extraOptions.maxRouteRooms || 63;
+    var valid = cached && cached.version === 2 && cached.rooms.length <= routeLimit &&
+        cached.from == creep.room.name && cached.to == pos.roomName &&
         Game.time - cached.tick < 25 && !getStuckTicks(creep);
     if(valid) {
         var from = cached.from;
@@ -284,11 +286,11 @@ function routedMoveOptions(creep, target, extraOptions) {
     if(!valid) {
         delete creep.memory._move;
         var route = Game.map.findRoute(creep.room.name, pos.roomName, {routeCallback: policy});
-        if(!Array.isArray(route) || !route.length || route.length >= 64) {
+        if(!Array.isArray(route) || !route.length || route.length > routeLimit || route.length >= 64) {
             delete creep.memory.remoteRoute;
             return null;
         }
-        cached = {from: creep.room.name, to: pos.roomName, tick: Game.time,
+        cached = {version: 2, from: creep.room.name, to: pos.roomName, tick: Game.time,
             rooms: route.map(function(step) { return step.room; })};
         creep.memory.remoteRoute = cached;
     }
@@ -307,7 +309,23 @@ function routedMoveOptions(creep, target, extraOptions) {
             }
             return blockedTravelCosts;
         }
-        return originalCallback ? originalCallback(roomName, costs) : costs;
+        var result = originalCallback ? originalCallback(roomName, costs) : costs;
+        result = result || costs;
+        if(roomName == creep.room.name) {
+            // A partial path may end on an exit tile and cross rooms before the
+            // neighbor's matrix is consulted. Only expose our planned next exit.
+            var exits = Game.map.describeExits(roomName) || {};
+            var nextRoom = cached.rooms[0];
+            for(var edge = 0; edge < 50; edge++) {
+                if(exits[FIND_EXIT_TOP] != nextRoom) { result.set(edge, 0, 255); }
+                if(exits[FIND_EXIT_BOTTOM] != nextRoom) { result.set(edge, 49, 255); }
+                if(exits[FIND_EXIT_LEFT] != nextRoom) { result.set(0, edge, 255); }
+                if(exits[FIND_EXIT_RIGHT] != nextRoom) { result.set(49, edge, 255); }
+            }
+            result.set(0, 0, 255); result.set(49, 0, 255);
+            result.set(0, 49, 255); result.set(49, 49, 255);
+        }
+        return result;
     };
     return options;
 }
@@ -1605,6 +1623,7 @@ function upgrade(creep) {
 }
 
 module.exports = {
+    travelPolicyVersion: 'safe-exits-v2',
     announceIntent: announceIntent,
     canReachBeforeDecay: canReachBeforeDecay,
     canMineSourceOnArrival: canMineSourceOnArrival,

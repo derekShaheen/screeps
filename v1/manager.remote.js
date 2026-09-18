@@ -298,6 +298,21 @@ function getRemoteTravelOptions(homeRoomName, destinationRoomName) {
     };
 }
 
+function getScoutTravelOptions(homeRoomName, destinationRoomName) {
+    var options = getRemoteTravelOptions(homeRoomName, destinationRoomName);
+    var policy = options.routeCallback;
+    var home = Game.rooms[homeRoomName];
+    var settings = home && getSettings(home);
+    var radius = settings ? settings.maxRooms : DEFAULT_SETTINGS.maxRooms;
+    // A nearby destination must not turn into a tour around the entire sector.
+    options.maxRouteRooms = Math.max(1, Math.min(63, radius * 2));
+    options.routeCallback = function(roomName, fromRoomName) {
+        if(getRoomLinearDistance(homeRoomName, roomName) > radius) { return Infinity; }
+        return policy(roomName, fromRoomName);
+    };
+    return options;
+}
+
 function moveToRoom(creep, roomName, stroke, intentMessage, intentKey) {
     if(!creep || !roomName) {
         return false;
@@ -309,7 +324,8 @@ function moveToRoom(creep, roomName, stroke, intentMessage, intentKey) {
         stroke,
         intentMessage,
         intentKey,
-        getRemoteTravelOptions(creep.memory.homeRoom || creep.room.name, roomName)
+        (creep.memory.role == 'scout' ? getScoutTravelOptions : getRemoteTravelOptions)(
+            creep.memory.homeRoom || creep.room.name, roomName)
     );
 }
 
@@ -1084,7 +1100,8 @@ function getReport(homeRoomName, spawnManager) {
                 ' maxRooms=' + settings.maxRooms +
                 ' minHomeRcl=' + settings.minHomeRcl +
                 ' known=' + remoteNames.length +
-                ' scoutPolicy=recover-mining-v1' +
+                ' scoutPolicy=safe-exits-v2' +
+                ' movementPolicy=' + (creepUtils.travelPolicyVersion || 'legacy') +
                 (homeBlockers.length ? ' blockedBy=' + homeBlockers.join(', ') : ' eligible')
         );
         lines.push(getRemoteSpawnReportLine(room, settings, spawnManager));
@@ -1399,10 +1416,13 @@ function getClaimerTarget(homeRoomName, currentTargetRoom) {
 }
 
 function hasScoutRoute(homeRoomName, fromRoomName, targetRoomName) {
-    var route = Game.map.findRoute(fromRoomName, targetRoomName,
-        getRemoteTravelOptions(homeRoomName, targetRoomName));
-    if(Array.isArray(route) && route.length > 0 && route.length < 64) { return true; }
-    failScoutTarget(homeRoomName, targetRoomName, 'no safe scouting route');
+    var options = getScoutTravelOptions(homeRoomName, targetRoomName);
+    var route = Game.map.findRoute(fromRoomName, targetRoomName, options);
+    if(Array.isArray(route) && route.length > 0 && route.length <= options.maxRouteRooms) { return true; }
+    failScoutTarget(homeRoomName, targetRoomName,
+        Array.isArray(route) && route.length > options.maxRouteRooms ?
+            'scouting route too long: ' + route.length + ' rooms (limit ' + options.maxRouteRooms + ')' :
+            'no safe scouting route');
     return false;
 }
 

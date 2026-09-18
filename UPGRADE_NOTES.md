@@ -76,3 +76,14 @@ Remembered hostile towers no longer become scout destinations or transit rooms m
 remoteReport() now includes scoutPolicy=recover-mining-v1 and each scout's current room, destination, retreat state, and cached room route. This distinguishes a hostile destination from an attempted transit route and identifies the running policy.
 
 Validation: 54 simulated tests pass, including the W33S5/W33S4 recovery scenario through a subsequent remote-miner spawn request at RCL 3. Project source only; deploy manager.remote.js with the previously updated role.scout.js. Live server code and Memory were not modified.
+
+
+## Constrain actual exits and scout detours (2026-09-17)
+
+The report showed a scout targeting W32S6 on a 14-room detour, while W33S6 was excluded and W33S4 mining had recovered. The movement callback blocked forbidden neighboring rooms but did not block the current room's exit tiles toward them. Since a partial path can terminate at an exit, room-level exclusions alone were insufficient. Routed movement now blocks every current-room boundary except the exit toward the next planned room. Older room and tile path caches are invalidated on first use.
+
+Scout routes now keep every transit room within the home's maxRooms radius and allow at most twice that radius in route steps (four at the current setting). Both assignment and movement reject excessive detours. Retreats retain the ability to take longer safe routes home.
+
+Deployment requires manager.remote.js and utils.creep.js together, retaining the previously updated role.scout.js. remoteReport() now shows both scoutPolicy=safe-exits-v2 and movementPolicy=safe-exits-v2; movementPolicy=legacy identifies an outdated movement module. No live scripts or server Memory were modified.
+
+Validation: 60 simulated tests, including the reported 14-room detour, southern exit blocking with a westward route, cache migration, movement-time route limits, and long safe retreats. Live movement remains to be verified.
